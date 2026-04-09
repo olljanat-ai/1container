@@ -35,6 +35,7 @@ type AgentClient struct {
 	streamClient *http.Client // no timeout for streaming
 	streamsMu    sync.Mutex
 	streams      map[string]func()
+	writeMu      sync.Mutex // protects concurrent WebSocket writes
 }
 
 // NewAgentClient creates a new agent.
@@ -128,6 +129,8 @@ func (a *AgentClient) cancelStream(reqID string) {
 
 func (a *AgentClient) sendMsg(conn *websocket.Conn, v interface{}) error {
 	data, _ := json.Marshal(v)
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 	return conn.WriteMessage(websocket.TextMessage, data)
 }
 
