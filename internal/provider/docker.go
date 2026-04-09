@@ -95,7 +95,7 @@ func (d *DockerProvider) ListContainers(ctx context.Context) ([]models.Container
 			name = strings.TrimPrefix(dc.Names[0], "/")
 		}
 		out = append(out, models.Container{
-			ID:          dc.ID[:12],
+			ID:          truncateID(dc.ID, 12),
 			Name:        name,
 			Image:       dc.Image,
 			Status:      dc.Status,
@@ -129,7 +129,7 @@ func (d *DockerProvider) InspectContainer(ctx context.Context, id string) (*mode
 
 	detail := &models.ContainerDetail{
 		Container: models.Container{
-			ID:          di.ID[:12],
+			ID:          truncateID(di.ID, 12),
 			Name:        strings.TrimPrefix(di.Name, "/"),
 			Image:       di.Config.Image,
 			State:       di.State.Status,
