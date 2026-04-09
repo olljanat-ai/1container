@@ -69,7 +69,7 @@ function renderContainers() {
   const empty = document.getElementById('no-containers');
   if (filtered.length === 0) { tbody.innerHTML = ''; empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
-  tbody.innerHTML = filtered.map(c => `
+  tbody.innerHTML = filtered.map((c, i) => `
     <tr>
       <td><strong>${esc(c.name)}</strong><br><span class="muted small">${esc(c.id)}</span></td>
       <td class="truncate">${esc(c.image)}</td>
@@ -78,11 +78,17 @@ function renderContainers() {
       <td class="muted">${esc(c.namespace || '—')}</td>
       <td class="muted">${esc(c.node || '—')}</td>
       <td class="actions">
-        <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','inspect')">Inspect</button>
-        <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','logs')">Logs</button>
-        <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','shell')">Shell</button>
+        <button class="btn btn-sm" data-idx="${i}" data-action="inspect">Inspect</button>
+        <button class="btn btn-sm" data-idx="${i}" data-action="logs">Logs</button>
+        <button class="btn btn-sm" data-idx="${i}" data-action="shell">Shell</button>
       </td>
     </tr>`).join('');
+  tbody.querySelectorAll('button[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const c = filtered[parseInt(btn.dataset.idx)];
+      openPanel(c.env_id, c.id, c.name, btn.dataset.action);
+    });
+  });
 }
 
 // ============================================================
@@ -103,14 +109,19 @@ function renderEnvironments() {
     grid.innerHTML = '<div class="empty">No environments configured. Add one to get started.</div>';
     return;
   }
-  grid.innerHTML = environments.map(e => `
+  grid.innerHTML = environments.map((e, i) => `
     <div class="env-card">
       <h4><span class="status-dot ${e.online ? 'online' : 'offline'}"></span>${esc(e.name)}</h4>
       <div class="meta">Cluster: ${esc(e.cluster_name || e.cluster_id)} <span class="env-type">${esc(e.cluster_type)}</span></div>
       <div class="meta">Namespace: ${esc(e.namespace || '(none)')}</div>
       <div class="meta">Agent: ${e.online ? 'Connected' : 'Offline'}</div>
-      <div class="env-actions"><button class="btn btn-sm" onclick="removeEnv('${esc(e.id)}')">Remove</button></div>
+      <div class="env-actions"><button class="btn btn-sm" data-env-idx="${i}">Remove</button></div>
     </div>`).join('');
+  grid.querySelectorAll('button[data-env-idx]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      removeEnv(environments[parseInt(btn.dataset.envIdx)].id);
+    });
+  });
 }
 
 function populateEnvFilter() {
