@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"container-hub/internal/models"
 	"context"
 	"encoding/json"
@@ -169,7 +170,7 @@ func (d *DockerProvider) ExecContainer(ctx context.Context, id string, cmd []str
 	payload, _ := json.Marshal(map[string]interface{}{
 		"AttachStdout": true, "AttachStderr": true, "Cmd": cmd,
 	})
-	resp, err := d.do(ctx, "POST", "/v1.41/containers/"+id+"/exec", strings.NewReader(string(payload)))
+	resp, err := d.do(ctx, "POST", "/v1.41/containers/"+id+"/exec", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
