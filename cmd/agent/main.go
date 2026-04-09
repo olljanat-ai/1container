@@ -10,47 +10,54 @@ import (
 
 func main() {
 	serverURL := flag.String("server", "", "hub server WebSocket URL (ws://host:port/ws/tunnel)")
-	envID := flag.String("env-id", "", "unique environment ID")
-	envName := flag.String("env-name", "", "human-friendly environment name")
-	envType := flag.String("env-type", "", "environment type: docker-swarm, kubernetes, nomad")
+	clusterID := flag.String("cluster-id", "", "unique cluster ID")
+	clusterName := flag.String("cluster-name", "", "human-friendly cluster name")
+	clusterType := flag.String("cluster-type", "", "cluster type: docker-swarm, kubernetes, nomad")
 	localEndpoint := flag.String("endpoint", "", "local orchestrator API endpoint")
-	agentToken := flag.String("token", "", "shared authentication token")
-	skipTLS := flag.Bool("skip-tls", false, "skip TLS verification for local endpoint")
+	authToken := flag.String("token", "", "auth token for local orchestrator API")
+	skipTLS := flag.Bool("skip-tls", false, "skip TLS verification for local endpoint and hub")
 	flag.Parse()
 
-	// Allow env var overrides
+	// Env var overrides
 	if v := os.Getenv("HUB_SERVER"); v != "" {
 		*serverURL = v
 	}
-	if v := os.Getenv("ENV_ID"); v != "" {
-		*envID = v
+	if v := os.Getenv("CLUSTER_ID"); v != "" {
+		*clusterID = v
 	}
-	if v := os.Getenv("ENV_NAME"); v != "" {
-		*envName = v
+	if v := os.Getenv("CLUSTER_NAME"); v != "" {
+		*clusterName = v
 	}
-	if v := os.Getenv("ENV_TYPE"); v != "" {
-		*envType = v
+	if v := os.Getenv("CLUSTER_TYPE"); v != "" {
+		*clusterType = v
 	}
 	if v := os.Getenv("LOCAL_ENDPOINT"); v != "" {
 		*localEndpoint = v
 	}
-	if v := os.Getenv("AGENT_TOKEN"); v != "" {
-		*agentToken = v
+	if v := os.Getenv("AUTH_TOKEN"); v != "" {
+		*authToken = v
 	}
 	if strings.EqualFold(os.Getenv("SKIP_TLS"), "true") {
 		*skipTLS = true
 	}
 
-	if *serverURL == "" || *envID == "" || *envName == "" || *envType == "" || *localEndpoint == "" {
-		log.Fatal("required flags: -server, -env-id, -env-name, -env-type, -endpoint (or corresponding env vars)")
+	if *serverURL == "" || *clusterID == "" || *clusterName == "" || *clusterType == "" || *localEndpoint == "" {
+		log.Fatal("required: -server, -cluster-id, -cluster-name, -cluster-type, -endpoint")
 	}
 
 	log.Printf("container-hub agent starting")
-	log.Printf("  server:   %s", *serverURL)
-	log.Printf("  env:      %s (%s)", *envName, *envID)
-	log.Printf("  type:     %s", *envType)
+	log.Printf("  hub:      %s", *serverURL)
+	log.Printf("  cluster:  %s (%s) type=%s", *clusterName, *clusterID, *clusterType)
 	log.Printf("  endpoint: %s", *localEndpoint)
 
-	agent := tunnel.NewAgentClient(*serverURL, *envID, *envName, *envType, *localEndpoint, *agentToken, *skipTLS)
-	agent.Run() // blocks, reconnects on failure
+	agent := tunnel.NewAgentClient(tunnel.AgentConfig{
+		ServerURL:     *serverURL,
+		ClusterID:     *clusterID,
+		ClusterName:   *clusterName,
+		ClusterType:   *clusterType,
+		LocalEndpoint: *localEndpoint,
+		AuthToken:     *authToken,
+		SkipTLS:       *skipTLS,
+	})
+	agent.Run()
 }

@@ -1,27 +1,20 @@
 [
   {
-    "id": "k8s-prod",
-    "name": "Production Kubernetes",
-    "type": "kubernetes",
-    "endpoint": "https://kube-apiserver:6443",
-    "token": "eyJhbGci...",
-    "skip_tls": true,
-    "tunnel": false
+    "id": "prod-k8s-default",
+    "name": "Production (default)",
+    "cluster_id": "k8s-prod",
+    "namespace": "default"
   },
   {
-    "id": "swarm-staging",
+    "id": "prod-k8s-monitoring",
+    "name": "Production (monitoring)",
+    "cluster_id": "k8s-prod",
+    "namespace": "monitoring"
+  },
+  {
+    "id": "staging-swarm",
     "name": "Staging Swarm",
-    "type": "docker-swarm",
-    "endpoint": "https://swarm-manager:2376",
-    "token": "",
-    "tunnel": false
-  },
-  {
-    "id": "nomad-dc2",
-    "name": "DC2 Nomad",
-    "type": "nomad",
-    "endpoint": "",
-    "token": "nomad-acl-token",
-    "tunnel": true
+    "cluster_id": "swarm-staging",
+    "namespace": ""
   }
 ]

@@ -7,10 +7,10 @@ services:
       - "8080:8080"
     environment:
       - LISTEN_ADDR=:8080
-      # Pre-register an environment via env var (optional):
-      # - ENVIRONMENTS=[{"id":"k8s-prod","name":"Production K8s","type":"kubernetes","endpoint":"https://kube-api:6443","token":"xxx","skip_tls":true}]
+      # Pre-register environments via env var (optional):
+      # - ENVIRONMENTS=[{"id":"prod-default","name":"Production","cluster_id":"k8s-prod","namespace":"default"}]
 
-  # Example agent for a Docker Swarm behind a firewall
+  # Example agent for a Docker Swarm cluster behind a firewall.
   # Deploy this in the target network:
   # agent:
   #   build:
@@ -18,8 +18,9 @@ services:
   #     dockerfile: Dockerfile.agent
   #   environment:
   #     - HUB_SERVER=ws://hub:8080/ws/tunnel
-  #     - ENV_ID=swarm-dc1
-  #     - ENV_NAME=DC1 Swarm
-  #     - ENV_TYPE=docker-swarm
+  #     - CLUSTER_ID=swarm-dc1
+  #     - CLUSTER_NAME=DC1 Swarm
+  #     - CLUSTER_TYPE=docker-swarm
   #     - LOCAL_ENDPOINT=http://swarm-manager:2375
-  #     - SKIP_TLS=true
+  #     - AUTH_TOKEN=
+  #     - SKIP_TLS=false

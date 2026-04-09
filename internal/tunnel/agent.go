@@ -17,42 +17,36 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// AgentClient runs on the remote side, connecting back to the hub.
-type AgentClient struct {
-	ServerURL     string
-	EnvID         string
-	EnvName       string
-	EnvType       string
-	LocalEndpoint string
-	AgentToken    string
+// AgentConfig holds the settings needed to create an AgentClient.
+type AgentConfig struct {
+	ServerURL     string // ws(s)://hub/ws/tunnel
+	ClusterID     string
+	ClusterName   string
+	ClusterType   string // docker-swarm, kubernetes, nomad
+	LocalEndpoint string // http(s)://orchestrator-api
+	AuthToken     string // injected into requests to local endpoint
 	SkipTLS       bool
-	httpClient    *http.Client
-	streamClient  *http.Client // no timeout, for streaming requests
+}
 
-	// Track active streams so we can cancel them
-	streamsMu sync.Mutex
-	streams   map[string]func() // reqID -> cancel func
+// AgentClient runs inside the target network, tunnelling back to the hub.
+type AgentClient struct {
+	AgentConfig
+	httpClient   *http.Client
+	streamClient *http.Client // no timeout for streaming
+	streamsMu    sync.Mutex
+	streams      map[string]func()
 }
 
 // NewAgentClient creates a new agent.
-func NewAgentClient(serverURL, envID, envName, envType, localEndpoint, agentToken string, skipTLS bool) *AgentClient {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipTLS},
-	}
-	streamTr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipTLS},
-	}
+func NewAgentClient(cfg AgentConfig) *AgentClient {
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.SkipTLS}}
+	streamTr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.SkipTLS}}
+	cfg.LocalEndpoint = strings.TrimRight(cfg.LocalEndpoint, "/")
 	return &AgentClient{
-		ServerURL:     serverURL,
-		EnvID:         envID,
-		EnvName:       envName,
-		EnvType:       envType,
-		LocalEndpoint: strings.TrimRight(localEndpoint, "/"),
-		AgentToken:    agentToken,
-		SkipTLS:       skipTLS,
-		httpClient:    &http.Client{Transport: tr, Timeout: 30 * time.Second},
-		streamClient:  &http.Client{Transport: streamTr}, // no timeout for streaming
-		streams:       make(map[string]func()),
+		AgentConfig:  cfg,
+		httpClient:   &http.Client{Transport: tr, Timeout: 30 * time.Second},
+		streamClient: &http.Client{Transport: streamTr},
+		streams:      make(map[string]func()),
 	}
 }
 
@@ -72,12 +66,9 @@ func (a *AgentClient) connect() error {
 		return err
 	}
 	q := u.Query()
-	q.Set("env_id", a.EnvID)
-	q.Set("env_name", a.EnvName)
-	q.Set("env_type", a.EnvType)
-	if a.AgentToken != "" {
-		q.Set("token", a.AgentToken)
-	}
+	q.Set("cluster_id", a.ClusterID)
+	q.Set("cluster_name", a.ClusterName)
+	q.Set("cluster_type", a.ClusterType)
 	u.RawQuery = q.Encode()
 
 	dialer := websocket.Dialer{
@@ -95,25 +86,34 @@ func (a *AgentClient) connect() error {
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
-
-		// Try to decode as cancel message first
 		var cancel models.TunnelCancel
 		if json.Unmarshal(msg, &cancel) == nil && cancel.Cancel {
 			a.cancelStream(cancel.ID)
 			continue
 		}
-
 		var req models.TunnelRequest
 		if err := json.Unmarshal(msg, &req); err != nil {
 			log.Printf("unmarshal error: %v", err)
 			continue
 		}
-
 		if req.Stream {
 			go a.handleStreamRequest(conn, &req)
 		} else {
 			go a.handleRequest(conn, &req)
 		}
+	}
+}
+
+// authHeader returns the header name and value to inject based on cluster type.
+func (a *AgentClient) authHeader() (string, string) {
+	if a.AuthToken == "" {
+		return "", ""
+	}
+	switch a.ClusterType {
+	case "nomad":
+		return "X-Nomad-Token", a.AuthToken
+	default: // docker-swarm, kubernetes
+		return "Authorization", "Bearer " + a.AuthToken
 	}
 }
 
@@ -131,22 +131,14 @@ func (a *AgentClient) sendMsg(conn *websocket.Conn, v interface{}) error {
 	return conn.WriteMessage(websocket.TextMessage, data)
 }
 
-// handleRequest processes a single request-response.
 func (a *AgentClient) handleRequest(conn *websocket.Conn, req *models.TunnelRequest) {
 	resp := a.doHTTP(req)
 	a.sendMsg(conn, resp)
 }
 
-// handleStreamRequest processes a streaming request, sending chunks back.
 func (a *AgentClient) handleStreamRequest(conn *websocket.Conn, req *models.TunnelRequest) {
 	targetURL := a.LocalEndpoint + req.URL
-
-	var body io.Reader
-	if len(req.Body) > 0 {
-		body = strings.NewReader(string(req.Body))
-	}
-
-	httpReq, err := http.NewRequest(req.Method, targetURL, body)
+	httpReq, err := http.NewRequest(req.Method, targetURL, nil)
 	if err != nil {
 		a.sendMsg(conn, &models.TunnelResponse{ID: req.ID, Error: err.Error()})
 		return
@@ -156,15 +148,15 @@ func (a *AgentClient) handleStreamRequest(conn *websocket.Conn, req *models.Tunn
 			httpReq.Header.Add(k, v)
 		}
 	}
+	if hdr, val := a.authHeader(); hdr != "" {
+		httpReq.Header.Set(hdr, val)
+	}
 
-	// Register cancel function
-	ctx, cancelFunc := newCancellableContext()
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	httpReq = httpReq.WithContext(ctx)
-
 	a.streamsMu.Lock()
 	a.streams[req.ID] = cancelFunc
 	a.streamsMu.Unlock()
-
 	defer func() {
 		cancelFunc()
 		a.streamsMu.Lock()
@@ -179,19 +171,14 @@ func (a *AgentClient) handleStreamRequest(conn *websocket.Conn, req *models.Tunn
 	}
 	defer httpResp.Body.Close()
 
-	// Send initial response with status code and headers
 	headers := make(map[string][]string)
 	for k, v := range httpResp.Header {
 		headers[k] = v
 	}
 	a.sendMsg(conn, &models.TunnelResponse{
-		ID:         req.ID,
-		StatusCode: httpResp.StatusCode,
-		Headers:    headers,
-		Chunk:      true,
+		ID: req.ID, StatusCode: httpResp.StatusCode, Headers: headers, Chunk: true,
 	})
 
-	// Stream body in chunks
 	buf := make([]byte, 8192)
 	for {
 		n, readErr := httpResp.Body.Read(buf)
@@ -199,9 +186,7 @@ func (a *AgentClient) handleStreamRequest(conn *websocket.Conn, req *models.Tunn
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			if sendErr := a.sendMsg(conn, &models.TunnelResponse{
-				ID:    req.ID,
-				Body:  chunk,
-				Chunk: true,
+				ID: req.ID, Body: chunk, Chunk: true,
 			}); sendErr != nil {
 				return
 			}
@@ -210,19 +195,15 @@ func (a *AgentClient) handleStreamRequest(conn *websocket.Conn, req *models.Tunn
 			break
 		}
 	}
-
-	// Signal end
 	a.sendMsg(conn, &models.TunnelResponse{ID: req.ID, Done: true})
 }
 
 func (a *AgentClient) doHTTP(req *models.TunnelRequest) *models.TunnelResponse {
 	targetURL := a.LocalEndpoint + req.URL
-
 	var body io.Reader
 	if len(req.Body) > 0 {
 		body = strings.NewReader(string(req.Body))
 	}
-
 	httpReq, err := http.NewRequest(req.Method, targetURL, body)
 	if err != nil {
 		return &models.TunnelResponse{ID: req.ID, Error: err.Error()}
@@ -232,27 +213,21 @@ func (a *AgentClient) doHTTP(req *models.TunnelRequest) *models.TunnelResponse {
 			httpReq.Header.Add(k, v)
 		}
 	}
+	if hdr, val := a.authHeader(); hdr != "" {
+		httpReq.Header.Set(hdr, val)
+	}
 
 	httpResp, err := a.httpClient.Do(httpReq)
 	if err != nil {
 		return &models.TunnelResponse{ID: req.ID, Error: err.Error()}
 	}
 	defer httpResp.Body.Close()
-
 	respBody, _ := io.ReadAll(httpResp.Body)
 	headers := make(map[string][]string)
 	for k, v := range httpResp.Header {
 		headers[k] = v
 	}
-
 	return &models.TunnelResponse{
-		ID:         req.ID,
-		StatusCode: httpResp.StatusCode,
-		Headers:    headers,
-		Body:       respBody,
+		ID: req.ID, StatusCode: httpResp.StatusCode, Headers: headers, Body: respBody,
 	}
-}
-
-func newCancellableContext() (context.Context, context.CancelFunc) {
-	return context.WithCancel(context.Background())
 }

@@ -3,10 +3,8 @@ package provider
 import (
 	"container-hub/internal/models"
 	"context"
-	"crypto/tls"
 	"io"
 	"net/http"
-	"strings"
 )
 
 // Provider abstracts a container orchestrator API.
@@ -17,24 +15,25 @@ type Provider interface {
 	ExecContainer(ctx context.Context, containerID string, cmd []string) (*models.ExecResponse, error)
 }
 
-// New creates a Provider for the given environment using the supplied HTTP transport.
-func New(env *models.Environment, transport http.RoundTripper) Provider {
-	if transport == nil {
-		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: env.SkipTLS},
-		}
-	}
-	client := &http.Client{Transport: transport}
-	base := strings.TrimRight(env.Endpoint, "/")
+// Config holds provider configuration. Auth is handled by the agent, not here.
+type Config struct {
+	ClusterType models.ClusterType
+	Namespace   string // k8s/nomad namespace; empty for docker
+	EnvID       string // environment ID to tag on containers
+	EnvName     string // environment name to tag on containers
+}
 
-	switch env.Type {
-	case models.EnvDockerSwarm:
-		return &DockerProvider{client: client, base: base, token: env.Token, env: env}
-	case models.EnvKubernetes:
-		return &KubeProvider{client: client, base: base, token: env.Token, env: env}
-	case models.EnvNomad:
-		return &NomadProvider{client: client, base: base, token: env.Token, env: env}
+// New creates a provider for the given config using the supplied HTTP client.
+// The client's transport tunnels requests through the agent.
+func New(cfg Config, client *http.Client) Provider {
+	switch cfg.ClusterType {
+	case models.ClusterDockerSwarm:
+		return &DockerProvider{client: client, cfg: cfg}
+	case models.ClusterKubernetes:
+		return &KubeProvider{client: client, cfg: cfg}
+	case models.ClusterNomad:
+		return &NomadProvider{client: client, cfg: cfg}
 	default:
-		return &DockerProvider{client: client, base: base, token: env.Token, env: env}
+		return &DockerProvider{client: client, cfg: cfg}
 	}
 }

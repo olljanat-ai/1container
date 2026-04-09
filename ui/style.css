@@ -204,6 +204,10 @@ pre {
 .term-err { color: var(--red); }
 .term-info { color: var(--muted); font-style: italic; }
 
+.hint { color: var(--muted); font-size: 12px; }
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+.truncate { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hidden { display: none !important; }
 
 @media (max-width: 768px) {

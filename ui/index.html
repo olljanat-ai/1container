@@ -12,17 +12,16 @@
     <nav>
       <button class="tab active" data-tab="containers">Containers</button>
       <button class="tab" data-tab="environments">Environments</button>
+      <button class="tab" data-tab="clusters">Clusters</button>
     </nav>
   </header>
 
   <main>
-    <!-- Containers Tab -->
+    <!-- Containers -->
     <section id="containers" class="panel active">
       <div class="toolbar">
         <input type="text" id="search" placeholder="Search containers…">
-        <select id="env-filter">
-          <option value="">All Environments</option>
-        </select>
+        <select id="env-filter"><option value="">All Environments</option></select>
         <select id="state-filter">
           <option value="">All States</option>
           <option value="running">Running</option>
@@ -38,8 +37,8 @@
             <th>Name</th>
             <th>Image</th>
             <th>State</th>
-            <th>Status</th>
             <th>Environment</th>
+            <th>Namespace</th>
             <th>Node</th>
             <th>Actions</th>
           </tr>
@@ -49,34 +48,33 @@
       <div id="no-containers" class="empty hidden">No containers found.</div>
     </section>
 
-    <!-- Environments Tab -->
+    <!-- Environments -->
     <section id="environments" class="panel">
       <div class="toolbar">
         <button id="add-env-btn" class="btn btn-primary">+ Add Environment</button>
       </div>
       <div id="env-list" class="env-grid"></div>
-
       <div id="add-env-form" class="modal hidden">
         <div class="modal-content">
           <h3>Add Environment</h3>
-          <label>Name <input type="text" id="env-name"></label>
-          <label>Type
-            <select id="env-type">
-              <option value="docker-swarm">Docker Swarm</option>
-              <option value="kubernetes">Kubernetes</option>
-              <option value="nomad">Nomad</option>
-            </select>
+          <label>Name <input type="text" id="env-name" placeholder="e.g. Production"></label>
+          <label>Cluster
+            <select id="env-cluster"></select>
           </label>
-          <label>API Endpoint <input type="text" id="env-endpoint" placeholder="https://host:port"></label>
-          <label>Auth Token <input type="password" id="env-token" placeholder="Optional"></label>
-          <label class="check"><input type="checkbox" id="env-tunnel"> Agent tunnel (environment behind firewall)</label>
-          <label class="check"><input type="checkbox" id="env-skip-tls"> Skip TLS verification</label>
+          <label id="env-ns-label">Namespace <input type="text" id="env-namespace" placeholder="e.g. default"></label>
+          <div id="env-ns-hint" class="hint hidden">Docker Swarm does not support namespaces.</div>
           <div class="form-actions">
             <button class="btn" id="env-cancel">Cancel</button>
             <button class="btn btn-primary" id="env-save">Save</button>
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- Clusters -->
+    <section id="clusters" class="panel">
+      <p class="hint" style="margin-bottom:16px">Clusters are auto-registered when agents connect. Deploy an agent in each target network.</p>
+      <div id="cluster-list" class="env-grid"></div>
     </section>
   </main>
 
@@ -91,13 +89,7 @@
       <button class="side-tab" data-side="logs">Logs</button>
       <button class="side-tab" data-side="shell">Shell</button>
     </div>
-
-    <!-- Inspect -->
-    <div id="side-inspect" class="side-body active">
-      <pre id="inspect-output">Loading…</pre>
-    </div>
-
-    <!-- Logs -->
+    <div id="side-inspect" class="side-body active"><pre id="inspect-output">Loading…</pre></div>
     <div id="side-logs" class="side-body">
       <div class="log-toolbar">
         <label>Tail: <input type="number" id="log-tail" value="200" min="10" max="5000"></label>
@@ -108,8 +100,6 @@
       </div>
       <pre id="log-output" class="log-view"></pre>
     </div>
-
-    <!-- Shell -->
     <div id="side-shell" class="side-body">
       <div id="terminal" class="terminal">
         <div id="term-output" class="term-output"></div>

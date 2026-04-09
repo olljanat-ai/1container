@@ -11,28 +11,29 @@ import (
 	"strings"
 )
 
-// KubeProvider talks to the Kubernetes API server.
+// KubeProvider talks to the Kubernetes API server, scoped to a single namespace.
 type KubeProvider struct {
 	client *http.Client
-	base   string
-	token  string
-	env    *models.Environment
+	cfg    Config
 }
 
 func (k *KubeProvider) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	u := k.base + path
-	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	req, err := http.NewRequestWithContext(ctx, method, "http://api"+path, body)
 	if err != nil {
 		return nil, err
-	}
-	if k.token != "" {
-		req.Header.Set("Authorization", "Bearer "+k.token)
 	}
 	req.Header.Set("Accept", "application/json")
 	return k.client.Do(req)
 }
 
-// Minimal Kubernetes API structs.
+// ns returns the namespace to use, defaulting to "default".
+func (k *KubeProvider) ns() string {
+	if k.cfg.Namespace != "" {
+		return k.cfg.Namespace
+	}
+	return "default"
+}
+
 type k8sPodList struct {
 	Items []k8sPod `json:"items"`
 }
@@ -55,10 +56,6 @@ type k8sPod struct {
 				ContainerPort int    `json:"containerPort"`
 				Protocol      string `json:"protocol"`
 			} `json:"ports"`
-			VolumeMounts []struct {
-				Name      string `json:"name"`
-				MountPath string `json:"mountPath"`
-			} `json:"volumeMounts"`
 			Env []struct {
 				Name  string `json:"name"`
 				Value string `json:"value"`
@@ -69,7 +66,6 @@ type k8sPod struct {
 		Phase             string `json:"phase"`
 		ContainerStatuses []struct {
 			Name         string `json:"name"`
-			ContainerID  string `json:"containerID"`
 			Ready        bool   `json:"ready"`
 			RestartCount int    `json:"restartCount"`
 			State        struct {
@@ -82,7 +78,8 @@ type k8sPod struct {
 }
 
 func (k *KubeProvider) ListContainers(ctx context.Context) ([]models.Container, error) {
-	resp, err := k.do(ctx, "GET", "/api/v1/pods", nil)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods", k.ns())
+	resp, err := k.do(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("k8s list: %w", err)
 	}
@@ -105,7 +102,6 @@ func (k *KubeProvider) ListContainers(ctx context.Context) ([]models.Container, 
 		if len(pod.Spec.Containers) > 0 {
 			image = pod.Spec.Containers[0].Image
 		}
-		// Detailed state from container statuses
 		if len(pod.Status.ContainerStatuses) > 0 {
 			cs := pod.Status.ContainerStatuses[0]
 			if cs.State.Waiting != nil {
@@ -117,32 +113,26 @@ func (k *KubeProvider) ListContainers(ctx context.Context) ([]models.Container, 
 			}
 		}
 
-		extra := map[string]string{
-			"namespace": pod.Metadata.Namespace,
-		}
-		// Use namespace/name as the compound ID for K8s
-		compoundID := pod.Metadata.Namespace + "/" + pod.Metadata.Name
 		out = append(out, models.Container{
-			ID:        compoundID,
-			Name:      pod.Metadata.Name,
-			Image:     image,
-			Status:    status,
-			State:     state,
-			EnvID:     k.env.ID,
-			EnvName:   k.env.Name,
-			EnvType:   k.env.Type,
-			Node:      pod.Spec.NodeName,
-			CreatedAt: pod.Metadata.CreationTimestamp,
-			Labels:    pod.Metadata.Labels,
-			Extra:     extra,
+			ID:          pod.Metadata.Name,
+			Name:        pod.Metadata.Name,
+			Image:       image,
+			Status:      status,
+			State:       state,
+			EnvID:       k.cfg.EnvID,
+			EnvName:     k.cfg.EnvName,
+			ClusterType: models.ClusterKubernetes,
+			Namespace:   pod.Metadata.Namespace,
+			Node:        pod.Spec.NodeName,
+			CreatedAt:   pod.Metadata.CreationTimestamp,
+			Labels:      pod.Metadata.Labels,
 		})
 	}
 	return out, nil
 }
 
 func (k *KubeProvider) InspectContainer(ctx context.Context, id string) (*models.ContainerDetail, error) {
-	ns, name := parseK8sID(id)
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", ns, name)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", k.ns(), id)
 	resp, err := k.do(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -160,17 +150,17 @@ func (k *KubeProvider) InspectContainer(ctx context.Context, id string) (*models
 
 	detail := &models.ContainerDetail{
 		Container: models.Container{
-			ID:        id,
-			Name:      pod.Metadata.Name,
-			State:     strings.ToLower(string(pod.Status.Phase)),
-			Status:    string(pod.Status.Phase),
-			EnvID:     k.env.ID,
-			EnvName:   k.env.Name,
-			EnvType:   k.env.Type,
-			Node:      pod.Spec.NodeName,
-			CreatedAt: pod.Metadata.CreationTimestamp,
-			Labels:    pod.Metadata.Labels,
-			Extra:     map[string]string{"namespace": pod.Metadata.Namespace},
+			ID:          pod.Metadata.Name,
+			Name:        pod.Metadata.Name,
+			State:       strings.ToLower(string(pod.Status.Phase)),
+			Status:      string(pod.Status.Phase),
+			EnvID:       k.cfg.EnvID,
+			EnvName:     k.cfg.EnvName,
+			ClusterType: models.ClusterKubernetes,
+			Namespace:   pod.Metadata.Namespace,
+			Node:        pod.Spec.NodeName,
+			CreatedAt:   pod.Metadata.CreationTimestamp,
+			Labels:      pod.Metadata.Labels,
 		},
 	}
 	if len(pod.Spec.Containers) > 0 {
@@ -179,8 +169,7 @@ func (k *KubeProvider) InspectContainer(ctx context.Context, id string) (*models
 		detail.Command = strings.Join(c.Command, " ")
 		for _, p := range c.Ports {
 			detail.Ports = append(detail.Ports, models.PortMapping{
-				ContainerPort: p.ContainerPort,
-				Protocol:      p.Protocol,
+				ContainerPort: p.ContainerPort, Protocol: p.Protocol,
 			})
 		}
 		for _, e := range c.Env {
@@ -194,8 +183,7 @@ func (k *KubeProvider) InspectContainer(ctx context.Context, id string) (*models
 }
 
 func (k *KubeProvider) ContainerLogs(ctx context.Context, id string, tail int, follow bool) (io.ReadCloser, error) {
-	ns, name := parseK8sID(id)
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/log?tailLines=%d&timestamps=true", ns, name, tail)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/log?tailLines=%d&timestamps=true", k.ns(), id, tail)
 	if follow {
 		path += "&follow=true"
 	}
@@ -205,41 +193,24 @@ func (k *KubeProvider) ContainerLogs(ctx context.Context, id string, tail int, f
 	}
 	if resp.StatusCode != 200 {
 		resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("k8s logs: %s – %s", resp.Status, string(b))
+		return nil, fmt.Errorf("k8s logs: %s", resp.Status)
 	}
 	return resp.Body, nil
 }
 
 func (k *KubeProvider) ExecContainer(ctx context.Context, id string, cmd []string) (*models.ExecResponse, error) {
-	ns, name := parseK8sID(id)
-
-	// Build exec URL with query params (Kubernetes SPDY/WS exec)
 	params := url.Values{}
 	params.Set("stdout", "1")
 	params.Set("stderr", "1")
 	for _, c := range cmd {
 		params.Add("command", c)
 	}
-
-	// Use the simple POST exec approach (requires compatible API versions)
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/exec?%s", ns, name, params.Encode())
-
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/exec?%s", k.ns(), id, params.Encode())
 	resp, err := k.do(ctx, "POST", path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("k8s exec: %w", err)
 	}
 	defer resp.Body.Close()
 	output, _ := io.ReadAll(resp.Body)
-
 	return &models.ExecResponse{Output: string(output), ExitCode: 0}, nil
-}
-
-// parseK8sID splits "namespace/name" back into parts.
-func parseK8sID(id string) (string, string) {
-	parts := strings.SplitN(id, "/", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "default", id
 }

@@ -1,41 +1,50 @@
 package models
 
-// EnvType identifies the container orchestrator.
-type EnvType string
+// ClusterType identifies the container orchestrator.
+type ClusterType string
 
 const (
-	EnvDockerSwarm EnvType = "docker-swarm"
-	EnvKubernetes  EnvType = "kubernetes"
-	EnvNomad       EnvType = "nomad"
+	ClusterDockerSwarm ClusterType = "docker-swarm"
+	ClusterKubernetes  ClusterType = "kubernetes"
+	ClusterNomad       ClusterType = "nomad"
 )
 
-// Environment represents a registered container platform.
+// Cluster represents a container platform connected via an agent.
+type Cluster struct {
+	ID     string      `json:"id"`
+	Name   string      `json:"name"`
+	Type   ClusterType `json:"type"`
+	Online bool        `json:"online"`
+}
+
+// Environment is a tenant: a namespace-scoped view into a cluster.
+// Docker Swarm has no namespace support so its namespace is always empty.
+// Kubernetes and Nomad map to their native namespace concept.
 type Environment struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Type     EnvType `json:"type"`
-	Endpoint string  `json:"endpoint"`           // base URL of orchestrator API
-	Token    string  `json:"token,omitempty"`     // bearer token passed through
-	CACert   string  `json:"ca_cert,omitempty"`   // optional CA certificate PEM
-	SkipTLS  bool    `json:"skip_tls,omitempty"`  // skip TLS verification
-	Tunnel   bool    `json:"tunnel"`              // true when agent provides connectivity
-	Online   bool    `json:"online"`              // tunnel agent connected
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	ClusterID   string      `json:"cluster_id"`
+	ClusterName string      `json:"cluster_name,omitempty"` // populated on read
+	ClusterType ClusterType `json:"cluster_type,omitempty"` // populated on read
+	Namespace   string      `json:"namespace"`              // k8s/nomad namespace, empty for docker
+	Online      bool        `json:"online,omitempty"`       // cluster agent connected
 }
 
 // Container is the unified view of a running workload.
 type Container struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Image     string            `json:"image"`
-	Status    string            `json:"status"`
-	State     string            `json:"state"` // running, stopped, pending …
-	EnvID     string            `json:"env_id"`
-	EnvName   string            `json:"env_name"`
-	EnvType   EnvType           `json:"env_type"`
-	Node      string            `json:"node"`
-	CreatedAt string            `json:"created_at"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Extra     map[string]string `json:"extra,omitempty"` // orchestrator-specific
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Image       string            `json:"image"`
+	Status      string            `json:"status"`
+	State       string            `json:"state"` // running, stopped, pending …
+	EnvID       string            `json:"env_id"`
+	EnvName     string            `json:"env_name"`
+	ClusterType ClusterType       `json:"cluster_type"`
+	Namespace   string            `json:"namespace"`
+	Node        string            `json:"node"`
+	CreatedAt   string            `json:"created_at"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Extra       map[string]string `json:"extra,omitempty"`
 }
 
 // ContainerDetail extends Container with deeper inspection data.
@@ -62,11 +71,13 @@ type Mount struct {
 	Type   string `json:"type"`
 }
 
-// TunnelRequest is sent from the server to the agent through the WebSocket.
+// --- Tunnel protocol ---------------------------------------------------------
+
+// TunnelRequest is sent from the hub to the agent through the WebSocket.
 type TunnelRequest struct {
 	ID      string              `json:"id"`
 	Method  string              `json:"method"`
-	URL     string              `json:"url"`
+	URL     string              `json:"url"` // path + query only; agent prepends local endpoint
 	Headers map[string][]string `json:"headers,omitempty"`
 	Body    []byte              `json:"body,omitempty"`
 	Stream  bool                `json:"stream,omitempty"` // request chunked streaming response
@@ -79,8 +90,8 @@ type TunnelResponse struct {
 	Headers    map[string][]string `json:"headers,omitempty"`
 	Body       []byte              `json:"body,omitempty"`
 	Error      string              `json:"error,omitempty"`
-	Chunk      bool                `json:"chunk,omitempty"` // true for streaming data chunks
-	Done       bool                `json:"done,omitempty"`  // true for final stream message
+	Chunk      bool                `json:"chunk,omitempty"` // streaming data chunk
+	Done       bool                `json:"done,omitempty"`  // final stream message
 }
 
 // TunnelCancel tells the agent to stop a streaming request.
@@ -88,6 +99,8 @@ type TunnelCancel struct {
 	ID     string `json:"id"`
 	Cancel bool   `json:"cancel"`
 }
+
+// --- API request/response bodies --------------------------------------------
 
 // ExecRequest is the body of the exec endpoint.
 type ExecRequest struct {

@@ -24,21 +24,26 @@ var wsUpgrader = websocket.Upgrader{
 
 // Server is the central API server.
 type Server struct {
-	mu   sync.RWMutex
-	envs map[string]*models.Environment
-	hub  *tunnel.Hub
-	mux  *http.ServeMux
+	mu       sync.RWMutex
+	clusters map[string]*models.Cluster     // clusterID -> cluster (auto-registered by agents)
+	envs     map[string]*models.Environment // envID -> environment (configured by admin)
+	hub      *tunnel.Hub
+	mux      *http.ServeMux
 }
 
 // NewServer creates and wires the API server.
 func NewServer(hub *tunnel.Hub) *Server {
 	s := &Server{
-		envs: make(map[string]*models.Environment),
-		hub:  hub,
+		clusters: make(map[string]*models.Cluster),
+		envs:     make(map[string]*models.Environment),
+		hub:      hub,
 	}
 	mux := http.NewServeMux()
 
-	// Environment CRUD
+	// Clusters (read-only, auto-registered by agents)
+	mux.HandleFunc("GET /api/clusters", s.listClusters)
+
+	// Environments (CRUD)
 	mux.HandleFunc("GET /api/environments", s.listEnvironments)
 	mux.HandleFunc("POST /api/environments", s.addEnvironment)
 	mux.HandleFunc("DELETE /api/environments/{id}", s.removeEnvironment)
@@ -46,43 +51,43 @@ func NewServer(hub *tunnel.Hub) *Server {
 	// Containers
 	mux.HandleFunc("GET /api/containers", s.listContainers)
 	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}", s.inspectOrAction)
-
-	// Exec (HTTP)
 	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}/exec", s.execContainer)
-
-	// Logs (HTTP – buffered)
 	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}/logs", s.containerLogs)
 
-	// WebSocket: streaming logs
+	// WebSocket endpoints
 	mux.HandleFunc("/ws/logs/{envID}/{containerID...}", s.wsLogs)
-
-	// WebSocket: interactive shell
 	mux.HandleFunc("/ws/shell/{envID}/{containerID...}", s.wsShell)
-
-	// Tunnel endpoint
 	mux.HandleFunc("/ws/tunnel", hub.HandleConnect)
 
-	// UI static files
+	// UI
 	mux.Handle("/", http.FileServer(http.Dir("ui")))
 
 	s.mux = mux
 	return s
 }
 
-// RegisterEnvironment adds an environment.
+// ClusterJoined is called by the hub when an agent connects.
+func (s *Server) ClusterJoined(id, name string, ctype models.ClusterType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clusters[id] = &models.Cluster{ID: id, Name: name, Type: ctype, Online: true}
+	log.Printf("cluster registered: %s (%s) type=%s", name, id, ctype)
+}
+
+// ClusterLeft is called by the hub when an agent disconnects.
+func (s *Server) ClusterLeft(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.clusters[id]; ok {
+		c.Online = false
+	}
+}
+
+// RegisterEnvironment adds a pre-configured environment.
 func (s *Server) RegisterEnvironment(env *models.Environment) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.envs[env.ID] = env
-}
-
-// SetOnline marks a tunnel environment as online/offline.
-func (s *Server) SetOnline(envID string, online bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if env, ok := s.envs[envID]; ok {
-		env.Online = online
-	}
 }
 
 // Handler returns the HTTP handler.
@@ -90,20 +95,32 @@ func (s *Server) Handler() http.Handler {
 	return corsMiddleware(s.mux)
 }
 
-// --- Environment handlers ---
+// --- Cluster handlers --------------------------------------------------------
+
+func (s *Server) listClusters(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	list := make([]*models.Cluster, 0, len(s.clusters))
+	for _, c := range s.clusters {
+		cc := *c
+		cc.Online = s.hub.IsOnline(c.ID)
+		list = append(list, &cc)
+	}
+	s.mu.RUnlock()
+	writeJSON(w, 200, list)
+}
+
+// --- Environment handlers ----------------------------------------------------
 
 func (s *Server) listEnvironments(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	list := make([]*models.Environment, 0, len(s.envs))
 	for _, env := range s.envs {
 		e := *env
-		if e.Tunnel {
-			e.Online = s.hub.IsOnline(e.ID)
-		} else {
-			e.Online = true
+		if c, ok := s.clusters[e.ClusterID]; ok {
+			e.ClusterName = c.Name
+			e.ClusterType = c.Type
+			e.Online = s.hub.IsOnline(c.ID)
 		}
-		e.Token = ""
-		e.CACert = ""
 		list = append(list, &e)
 	}
 	s.mu.RUnlock()
@@ -116,17 +133,35 @@ func (s *Server) addEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid JSON: "+err.Error())
 		return
 	}
-	if env.Name == "" || env.Type == "" {
-		writeErr(w, 400, "name and type required")
+	if env.Name == "" || env.ClusterID == "" {
+		writeErr(w, 400, "name and cluster_id required")
 		return
 	}
+
+	s.mu.RLock()
+	cluster, ok := s.clusters[env.ClusterID]
+	s.mu.RUnlock()
+	if !ok {
+		writeErr(w, 400, "cluster not found: "+env.ClusterID)
+		return
+	}
+
+	// Docker Swarm has no namespace support
+	if cluster.Type == models.ClusterDockerSwarm {
+		env.Namespace = ""
+	}
+
 	if env.ID == "" {
 		env.ID = shortID()
 	}
+
 	s.mu.Lock()
 	s.envs[env.ID] = &env
 	s.mu.Unlock()
-	log.Printf("environment registered: %s (%s) type=%s tunnel=%v", env.Name, env.ID, env.Type, env.Tunnel)
+
+	env.ClusterName = cluster.Name
+	env.ClusterType = cluster.Type
+	log.Printf("environment created: %s → cluster=%s namespace=%q", env.Name, env.ClusterID, env.Namespace)
 	writeJSON(w, 201, env)
 }
 
@@ -143,13 +178,13 @@ func (s *Server) removeEnvironment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
 
-// --- Container handlers ---
+// --- Container handlers ------------------------------------------------------
 
 func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 	envFilter := r.URL.Query().Get("env")
 
 	s.mu.RLock()
-	envsCopy := make([]*models.Environment, 0, len(s.envs))
+	envsCopy := make([]*models.Environment, 0)
 	for _, env := range s.envs {
 		if envFilter != "" && env.ID != envFilter {
 			continue
@@ -170,11 +205,15 @@ func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 
 	for _, env := range envsCopy {
 		go func(e *models.Environment) {
-			if e.Tunnel && !s.hub.IsOnline(e.ID) {
+			if !s.hub.IsOnline(e.ClusterID) {
 				ch <- envResult{envName: e.Name, err: fmt.Errorf("agent offline")}
 				return
 			}
 			p := s.providerFor(e)
+			if p == nil {
+				ch <- envResult{envName: e.Name, err: fmt.Errorf("cluster not found")}
+				return
+			}
 			containers, err := p.ListContainers(ctx)
 			ch <- envResult{containers: containers, err: err, envName: e.Name}
 		}(env)
@@ -219,8 +258,12 @@ func (s *Server) inspectOrAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
-
 	p := s.providerFor(env)
+	if p == nil {
+		writeErr(w, 502, "cluster not available")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -234,8 +277,7 @@ func (s *Server) inspectOrAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
-	containerID := r.PathValue("containerID")
-	containerID = strings.TrimSuffix(containerID, "/logs")
+	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/logs")
 
 	tail := 200
 	if t := r.URL.Query().Get("tail"); t != "" {
@@ -247,8 +289,12 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
-
 	p := s.providerFor(env)
+	if p == nil {
+		writeErr(w, 502, "cluster not available")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -260,15 +306,13 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 	defer rc.Close()
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(200)
 	io.Copy(w, rc)
 }
 
 func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
-	containerID := r.PathValue("containerID")
-	containerID = strings.TrimSuffix(containerID, "/exec")
+	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/exec")
 
 	var er models.ExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&er); err != nil {
@@ -285,8 +329,12 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
-
 	p := s.providerFor(env)
+	if p == nil {
+		writeErr(w, 502, "cluster not available")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -298,7 +346,7 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
-// --- WebSocket: streaming logs ---
+// --- WebSocket: streaming logs -----------------------------------------------
 
 func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
@@ -317,7 +365,6 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws logs upgrade error: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -325,7 +372,6 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	// Read loop to detect client disconnect
 	go func() {
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
@@ -336,6 +382,11 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	p := s.providerFor(env)
+	if p == nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("Error: cluster not available"))
+		return
+	}
+
 	rc, err := p.ContainerLogs(ctx, containerID, tail, true)
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Error: "+err.Error()))
@@ -351,16 +402,13 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if readErr != nil {
-			return
-		}
-		if ctx.Err() != nil {
+		if readErr != nil || ctx.Err() != nil {
 			return
 		}
 	}
 }
 
-// --- WebSocket: interactive shell ---
+// --- WebSocket: interactive shell --------------------------------------------
 
 func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
@@ -374,17 +422,19 @@ func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws shell upgrade error: %v", err)
 		return
 	}
 	defer conn.Close()
 
 	p := s.providerFor(env)
+	if p == nil {
+		conn.WriteJSON(map[string]string{"type": "output", "output": "Error: cluster not available"})
+		return
+	}
 
-	// Send welcome message
 	conn.WriteJSON(map[string]string{
 		"type":   "output",
-		"output": fmt.Sprintf("Connected to %s (%s)\nType commands below.\n", env.Name, containerID),
+		"output": fmt.Sprintf("Connected to %s [%s]\nType commands below.\n", env.Name, containerID),
 	})
 
 	for {
@@ -392,11 +442,10 @@ func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-
 		var req struct {
 			Cmd string `json:"cmd"`
 		}
-		if err := json.Unmarshal(msg, &req); err != nil || req.Cmd == "" {
+		if json.Unmarshal(msg, &req) != nil || req.Cmd == "" {
 			continue
 		}
 
@@ -404,9 +453,7 @@ func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 		result, execErr := p.ExecContainer(ctx, containerID, []string{"sh", "-c", req.Cmd})
 		cancel()
 
-		resp := map[string]interface{}{
-			"type": "output",
-		}
+		resp := map[string]interface{}{"type": "output"}
 		if execErr != nil {
 			resp["output"] = "Error: " + execErr.Error()
 			resp["exit_code"] = -1
@@ -414,14 +461,13 @@ func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 			resp["output"] = result.Output
 			resp["exit_code"] = result.ExitCode
 		}
-
-		if err := conn.WriteJSON(resp); err != nil {
+		if conn.WriteJSON(resp) != nil {
 			return
 		}
 	}
 }
 
-// --- Helpers ---
+// --- Helpers -----------------------------------------------------------------
 
 func (s *Server) getEnv(id string) *models.Environment {
 	s.mu.RLock()
@@ -430,11 +476,22 @@ func (s *Server) getEnv(id string) *models.Environment {
 }
 
 func (s *Server) providerFor(env *models.Environment) provider.Provider {
-	var transport http.RoundTripper
-	if env.Tunnel {
-		transport = s.hub.Transport(env.ID)
+	s.mu.RLock()
+	cluster, ok := s.clusters[env.ClusterID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
 	}
-	return provider.New(env, transport)
+
+	transport := s.hub.Transport(env.ClusterID)
+	cfg := provider.Config{
+		ClusterType: cluster.Type,
+		Namespace:   env.Namespace,
+		EnvID:       env.ID,
+		EnvName:     env.Name,
+	}
+	client := &http.Client{Transport: transport}
+	return provider.New(cfg, client)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

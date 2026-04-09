@@ -11,28 +11,22 @@ import (
 	"time"
 )
 
-// DockerProvider talks to the Docker Engine API (works for standalone and Swarm).
+// DockerProvider talks to the Docker Engine API (standalone and Swarm).
+// Auth is injected by the agent; the provider sends plain requests.
 type DockerProvider struct {
 	client *http.Client
-	base   string
-	token  string
-	env    *models.Environment
+	cfg    Config
 }
 
 func (d *DockerProvider) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	url := d.base + path
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, "http://api"+path, body)
 	if err != nil {
 		return nil, err
-	}
-	if d.token != "" {
-		req.Header.Set("Authorization", "Bearer "+d.token)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return d.client.Do(req)
 }
 
-// dockerContainer is the subset of fields we read from Docker's /containers/json.
 type dockerContainer struct {
 	ID      string            `json:"Id"`
 	Names   []string          `json:"Names"`
@@ -41,27 +35,13 @@ type dockerContainer struct {
 	Status  string            `json:"Status"`
 	Created int64             `json:"Created"`
 	Labels  map[string]string `json:"Labels"`
-	Ports   []struct {
-		PrivatePort int    `json:"PrivatePort"`
-		PublicPort  int    `json:"PublicPort"`
-		Type        string `json:"Type"`
-	} `json:"Ports"`
-	HostConfig struct {
-		NetworkMode string `json:"NetworkMode"`
-	} `json:"HostConfig"`
-	NetworkSettings struct {
-		Networks map[string]interface{} `json:"Networks"`
-	} `json:"NetworkSettings"`
 }
 
 type dockerInspect struct {
-	ID      string `json:"Id"`
-	Name    string `json:"Name"`
-	State   struct {
-		Status     string `json:"Status"`
-		Running    bool   `json:"Running"`
-		StartedAt  string `json:"StartedAt"`
-		FinishedAt string `json:"FinishedAt"`
+	ID    string `json:"Id"`
+	Name  string `json:"Name"`
+	State struct {
+		Status string `json:"Status"`
 	} `json:"State"`
 	Config struct {
 		Image string   `json:"Image"`
@@ -73,19 +53,8 @@ type dockerInspect struct {
 		Source      string `json:"Source"`
 		Destination string `json:"Destination"`
 	} `json:"Mounts"`
-	HostConfig struct {
-		RestartPolicy struct {
-			MaximumRetryCount int `json:"MaximumRetryCount"`
-		} `json:"RestartPolicy"`
-	} `json:"HostConfig"`
-	NetworkSettings struct {
-		Ports map[string][]struct {
-			HostPort string `json:"HostPort"`
-		} `json:"Ports"`
-	} `json:"NetworkSettings"`
 }
 
-// node returns the node name, falling back to "local".
 func (d *DockerProvider) node(ctx context.Context) string {
 	resp, err := d.do(ctx, "GET", "/info", nil)
 	if err != nil {
@@ -119,7 +88,6 @@ func (d *DockerProvider) ListContainers(ctx context.Context) ([]models.Container
 	}
 
 	nodeName := d.node(ctx)
-
 	out := make([]models.Container, 0, len(dcs))
 	for _, dc := range dcs {
 		name := ""
@@ -127,17 +95,17 @@ func (d *DockerProvider) ListContainers(ctx context.Context) ([]models.Container
 			name = strings.TrimPrefix(dc.Names[0], "/")
 		}
 		out = append(out, models.Container{
-			ID:        dc.ID[:12],
-			Name:      name,
-			Image:     dc.Image,
-			Status:    dc.Status,
-			State:     dc.State,
-			EnvID:     d.env.ID,
-			EnvName:   d.env.Name,
-			EnvType:   d.env.Type,
-			Node:      nodeName,
-			CreatedAt: time.Unix(dc.Created, 0).UTC().Format(time.RFC3339),
-			Labels:    dc.Labels,
+			ID:          dc.ID[:12],
+			Name:        name,
+			Image:       dc.Image,
+			Status:      dc.Status,
+			State:       dc.State,
+			EnvID:       d.cfg.EnvID,
+			EnvName:     d.cfg.EnvName,
+			ClusterType: models.ClusterDockerSwarm,
+			Node:        nodeName,
+			CreatedAt:   time.Unix(dc.Created, 0).UTC().Format(time.RFC3339),
+			Labels:      dc.Labels,
 		})
 	}
 	return out, nil
@@ -161,23 +129,21 @@ func (d *DockerProvider) InspectContainer(ctx context.Context, id string) (*mode
 
 	detail := &models.ContainerDetail{
 		Container: models.Container{
-			ID:      di.ID[:12],
-			Name:    strings.TrimPrefix(di.Name, "/"),
-			Image:   di.Config.Image,
-			State:   di.State.Status,
-			Status:  di.State.Status,
-			EnvID:   d.env.ID,
-			EnvName: d.env.Name,
-			EnvType: d.env.Type,
+			ID:          di.ID[:12],
+			Name:        strings.TrimPrefix(di.Name, "/"),
+			Image:       di.Config.Image,
+			State:       di.State.Status,
+			Status:      di.State.Status,
+			EnvID:       d.cfg.EnvID,
+			EnvName:     d.cfg.EnvName,
+			ClusterType: models.ClusterDockerSwarm,
 		},
 		Env:     di.Config.Env,
 		Command: strings.Join(di.Config.Cmd, " "),
 	}
 	for _, m := range di.Mounts {
 		detail.Mounts = append(detail.Mounts, models.Mount{
-			Source: m.Source,
-			Target: m.Destination,
-			Type:   m.Type,
+			Source: m.Source, Target: m.Destination, Type: m.Type,
 		})
 	}
 	return detail, nil
@@ -199,23 +165,11 @@ func (d *DockerProvider) ContainerLogs(ctx context.Context, id string, tail int,
 	return resp.Body, nil
 }
 
-type dockerExecCreate struct {
-	ID string `json:"Id"`
-}
-
-type dockerExecInspect struct {
-	ExitCode int `json:"ExitCode"`
-}
-
 func (d *DockerProvider) ExecContainer(ctx context.Context, id string, cmd []string) (*models.ExecResponse, error) {
-	// Create exec instance
-	payload := map[string]interface{}{
-		"AttachStdout": true,
-		"AttachStderr": true,
-		"Cmd":          cmd,
-	}
-	payloadBytes, _ := json.Marshal(payload)
-	resp, err := d.do(ctx, "POST", "/v1.41/containers/"+id+"/exec", strings.NewReader(string(payloadBytes)))
+	payload, _ := json.Marshal(map[string]interface{}{
+		"AttachStdout": true, "AttachStderr": true, "Cmd": cmd,
+	})
+	resp, err := d.do(ctx, "POST", "/v1.41/containers/"+id+"/exec", strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, err
 	}
@@ -224,36 +178,33 @@ func (d *DockerProvider) ExecContainer(ctx context.Context, id string, cmd []str
 		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("docker exec create: %s – %s", resp.Status, string(b))
 	}
-
-	var execCreate dockerExecCreate
+	var execCreate struct {
+		ID string `json:"Id"`
+	}
 	json.NewDecoder(resp.Body).Decode(&execCreate)
 
-	// Start exec
-	startPayload := `{"Detach":false,"Tty":false}`
-	startResp, err := d.do(ctx, "POST", "/v1.41/exec/"+execCreate.ID+"/start", strings.NewReader(startPayload))
+	startResp, err := d.do(ctx, "POST", "/v1.41/exec/"+execCreate.ID+"/start",
+		strings.NewReader(`{"Detach":false,"Tty":false}`))
 	if err != nil {
 		return nil, err
 	}
 	defer startResp.Body.Close()
 	output, _ := io.ReadAll(startResp.Body)
 
-	// Inspect for exit code
-	inspResp, err := d.do(ctx, "GET", "/v1.41/exec/"+execCreate.ID+"/json", nil)
+	inspResp, _ := d.do(ctx, "GET", "/v1.41/exec/"+execCreate.ID+"/json", nil)
 	exitCode := 0
-	if err == nil {
+	if inspResp != nil {
 		defer inspResp.Body.Close()
-		var ei dockerExecInspect
+		var ei struct {
+			ExitCode int `json:"ExitCode"`
+		}
 		json.NewDecoder(inspResp.Body).Decode(&ei)
 		exitCode = ei.ExitCode
 	}
 
-	// Strip Docker stream headers (8-byte prefix per frame)
-	cleaned := stripDockerStream(output)
-
-	return &models.ExecResponse{Output: string(cleaned), ExitCode: exitCode}, nil
+	return &models.ExecResponse{Output: string(stripDockerStream(output)), ExitCode: exitCode}, nil
 }
 
-// stripDockerStream removes the 8-byte header from each Docker multiplexed stream frame.
 func stripDockerStream(data []byte) []byte {
 	var out []byte
 	for len(data) >= 8 {
@@ -266,7 +217,7 @@ func stripDockerStream(data []byte) []byte {
 		data = data[size:]
 	}
 	if len(out) == 0 {
-		return data // fallback: return as-is
+		return data
 	}
 	return out
 }
