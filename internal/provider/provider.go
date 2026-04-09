@@ -34,6 +34,6 @@ func New(cfg Config, client *http.Client) Provider {
 	case models.ClusterNomad:
 		return &NomadProvider{client: client, cfg: cfg}
 	default:
-		return &DockerProvider{client: client, cfg: cfg}
+		return nil
 	}
 }
