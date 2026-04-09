@@ -37,3 +37,11 @@ func New(cfg Config, client *http.Client) Provider {
 		return nil
 	}
 }
+
+// truncateID safely shortens an ID string to maxLen characters.
+func truncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
+		return id
+	}
+	return id[:maxLen]
+}

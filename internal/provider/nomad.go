@@ -92,7 +92,7 @@ func (n *NomadProvider) ListContainers(ctx context.Context) ([]models.Container,
 				status = a.ClientStatus
 			}
 			out = append(out, models.Container{
-				ID:          a.ID[:8] + "/" + taskName,
+				ID:          truncateID(a.ID, 8) + "/" + taskName,
 				Name:        a.JobID + "." + a.TaskGroup + "." + taskName,
 				Status:      status,
 				State:       ts.State,
