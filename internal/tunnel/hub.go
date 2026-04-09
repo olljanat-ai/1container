@@ -147,10 +147,7 @@ func (ac *AgentConn) readLoop() {
 		}
 		ac.mu.Unlock()
 		if ok {
-			select {
-			case ch <- &resp:
-			default:
-			}
+			ch <- &resp
 			if resp.Done || (!resp.Chunk && resp.Error == "") {
 				close(ch)
 			}
