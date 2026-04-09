@@ -1,0 +1,27 @@
+[
+  {
+    "id": "k8s-prod",
+    "name": "Production Kubernetes",
+    "type": "kubernetes",
+    "endpoint": "https://kube-apiserver:6443",
+    "token": "eyJhbGci...",
+    "skip_tls": true,
+    "tunnel": false
+  },
+  {
+    "id": "swarm-staging",
+    "name": "Staging Swarm",
+    "type": "docker-swarm",
+    "endpoint": "https://swarm-manager:2376",
+    "token": "",
+    "tunnel": false
+  },
+  {
+    "id": "nomad-dc2",
+    "name": "DC2 Nomad",
+    "type": "nomad",
+    "endpoint": "",
+    "token": "nomad-acl-token",
+    "tunnel": true
+  }
+]

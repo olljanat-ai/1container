@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Container Hub</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="logo">&#9638; Container Hub</div>
+    <nav>
+      <button class="tab active" data-tab="containers">Containers</button>
+      <button class="tab" data-tab="environments">Environments</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Containers Tab -->
+    <section id="containers" class="panel active">
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="Search containers…">
+        <select id="env-filter">
+          <option value="">All Environments</option>
+        </select>
+        <select id="state-filter">
+          <option value="">All States</option>
+          <option value="running">Running</option>
+          <option value="stopped">Stopped</option>
+          <option value="pending">Pending</option>
+        </select>
+        <button id="refresh-btn" class="btn">&#8635; Refresh</button>
+      </div>
+      <div id="errors-bar" class="errors-bar hidden"></div>
+      <table id="container-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Image</th>
+            <th>State</th>
+            <th>Status</th>
+            <th>Environment</th>
+            <th>Node</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="container-body"></tbody>
+      </table>
+      <div id="no-containers" class="empty hidden">No containers found.</div>
+    </section>
+
+    <!-- Environments Tab -->
+    <section id="environments" class="panel">
+      <div class="toolbar">
+        <button id="add-env-btn" class="btn btn-primary">+ Add Environment</button>
+      </div>
+      <div id="env-list" class="env-grid"></div>
+
+      <!-- Add Environment Form -->
+      <div id="add-env-form" class="modal hidden">
+        <div class="modal-content">
+          <h3>Add Environment</h3>
+          <label>Name <input type="text" id="env-name"></label>
+          <label>Type
+            <select id="env-type">
+              <option value="docker-swarm">Docker Swarm</option>
+              <option value="kubernetes">Kubernetes</option>
+              <option value="nomad">Nomad</option>
+            </select>
+          </label>
+          <label>API Endpoint <input type="text" id="env-endpoint" placeholder="https://host:port"></label>
+          <label>Auth Token <input type="password" id="env-token" placeholder="Optional"></label>
+          <label class="check"><input type="checkbox" id="env-tunnel"> Agent tunnel (environment behind firewall)</label>
+          <label class="check"><input type="checkbox" id="env-skip-tls"> Skip TLS verification</label>
+          <div class="form-actions">
+            <button class="btn" id="env-cancel">Cancel</button>
+            <button class="btn btn-primary" id="env-save">Save</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Side Panel (Logs / Inspect / Exec) -->
+  <aside id="side-panel" class="side-panel hidden">
+    <div class="side-header">
+      <h3 id="side-title">Container</h3>
+      <button id="side-close">&times;</button>
+    </div>
+    <div class="side-tabs">
+      <button class="side-tab active" data-side="inspect">Inspect</button>
+      <button class="side-tab" data-side="logs">Logs</button>
+      <button class="side-tab" data-side="exec">Exec</button>
+    </div>
+    <div id="side-inspect" class="side-body active">
+      <pre id="inspect-output">Loading…</pre>
+    </div>
+    <div id="side-logs" class="side-body">
+      <div class="log-toolbar">
+        <label>Lines: <input type="number" id="log-tail" value="200" min="10" max="5000"></label>
+        <button class="btn" id="log-refresh">Refresh</button>
+      </div>
+      <pre id="log-output" class="log-view"></pre>
+    </div>
+    <div id="side-exec" class="side-body">
+      <div class="exec-input">
+        <input type="text" id="exec-cmd" placeholder="e.g. ls -la /tmp">
+        <button class="btn btn-primary" id="exec-run">Run</button>
+      </div>
+      <pre id="exec-output" class="log-view"></pre>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
