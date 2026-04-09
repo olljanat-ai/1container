@@ -183,8 +183,11 @@ func (d *DockerProvider) InspectContainer(ctx context.Context, id string) (*mode
 	return detail, nil
 }
 
-func (d *DockerProvider) ContainerLogs(ctx context.Context, id string, tail int) (io.ReadCloser, error) {
+func (d *DockerProvider) ContainerLogs(ctx context.Context, id string, tail int, follow bool) (io.ReadCloser, error) {
 	path := fmt.Sprintf("/v1.41/containers/%s/logs?stdout=1&stderr=1&tail=%d&timestamps=1", id, tail)
+	if follow {
+		path += "&follow=1"
+	}
 	resp, err := d.do(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err

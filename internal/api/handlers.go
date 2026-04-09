@@ -14,12 +14,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
+
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
 
 // Server is the central API server.
 type Server struct {
 	mu   sync.RWMutex
-	envs map[string]*models.Environment // id -> env
+	envs map[string]*models.Environment
 	hub  *tunnel.Hub
 	mux  *http.ServeMux
 }
@@ -41,13 +47,19 @@ func NewServer(hub *tunnel.Hub) *Server {
 	mux.HandleFunc("GET /api/containers", s.listContainers)
 	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}", s.inspectOrAction)
 
-	// Exec
+	// Exec (HTTP)
 	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}/exec", s.execContainer)
 
-	// Logs
+	// Logs (HTTP – buffered)
 	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}/logs", s.containerLogs)
 
-	// Tunnel endpoint (agents connect here)
+	// WebSocket: streaming logs
+	mux.HandleFunc("/ws/logs/{envID}/{containerID...}", s.wsLogs)
+
+	// WebSocket: interactive shell
+	mux.HandleFunc("/ws/shell/{envID}/{containerID...}", s.wsShell)
+
+	// Tunnel endpoint
 	mux.HandleFunc("/ws/tunnel", hub.HandleConnect)
 
 	// UI static files
@@ -57,7 +69,7 @@ func NewServer(hub *tunnel.Hub) *Server {
 	return s
 }
 
-// RegisterEnvironment adds an environment (used by config loader and API).
+// RegisterEnvironment adds an environment.
 func (s *Server) RegisterEnvironment(env *models.Environment) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,20 +90,18 @@ func (s *Server) Handler() http.Handler {
 	return corsMiddleware(s.mux)
 }
 
-// --- Handlers ---
+// --- Environment handlers ---
 
 func (s *Server) listEnvironments(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	list := make([]*models.Environment, 0, len(s.envs))
 	for _, env := range s.envs {
-		// Update online status for tunnel environments
 		e := *env
 		if e.Tunnel {
 			e.Online = s.hub.IsOnline(e.ID)
 		} else {
 			e.Online = true
 		}
-		// Don't expose token to frontend
 		e.Token = ""
 		e.CACert = ""
 		list = append(list, &e)
@@ -132,6 +142,8 @@ func (s *Server) removeEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
+
+// --- Container handlers ---
 
 func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 	envFilter := r.URL.Query().Get("env")
@@ -193,7 +205,6 @@ func (s *Server) inspectOrAction(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
 	containerID := r.PathValue("containerID")
 
-	// Check if this is actually a logs or exec request that fell through
 	if strings.HasSuffix(containerID, "/logs") {
 		s.containerLogs(w, r)
 		return
@@ -241,7 +252,7 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	rc, err := p.ContainerLogs(ctx, containerID, tail)
+	rc, err := p.ContainerLogs(ctx, containerID, tail, false)
 	if err != nil {
 		writeErr(w, 502, err.Error())
 		return
@@ -285,6 +296,129 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+// --- WebSocket: streaming logs ---
+
+func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
+	envID := r.PathValue("envID")
+	containerID := r.PathValue("containerID")
+
+	tail := 100
+	if t := r.URL.Query().Get("tail"); t != "" {
+		fmt.Sscanf(t, "%d", &tail)
+	}
+
+	env := s.getEnv(envID)
+	if env == nil {
+		http.Error(w, "environment not found", 404)
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("ws logs upgrade error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Read loop to detect client disconnect
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	p := s.providerFor(env)
+	rc, err := p.ContainerLogs(ctx, containerID, tail, true)
+	if err != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("Error: "+err.Error()))
+		return
+	}
+	defer rc.Close()
+
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := rc.Read(buf)
+		if n > 0 {
+			if writeErr := conn.WriteMessage(websocket.TextMessage, buf[:n]); writeErr != nil {
+				return
+			}
+		}
+		if readErr != nil {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+// --- WebSocket: interactive shell ---
+
+func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
+	envID := r.PathValue("envID")
+	containerID := r.PathValue("containerID")
+
+	env := s.getEnv(envID)
+	if env == nil {
+		http.Error(w, "environment not found", 404)
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("ws shell upgrade error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	p := s.providerFor(env)
+
+	// Send welcome message
+	conn.WriteJSON(map[string]string{
+		"type":   "output",
+		"output": fmt.Sprintf("Connected to %s (%s)\nType commands below.\n", env.Name, containerID),
+	})
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+
+		var req struct {
+			Cmd string `json:"cmd"`
+		}
+		if err := json.Unmarshal(msg, &req); err != nil || req.Cmd == "" {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result, execErr := p.ExecContainer(ctx, containerID, []string{"sh", "-c", req.Cmd})
+		cancel()
+
+		resp := map[string]interface{}{
+			"type": "output",
+		}
+		if execErr != nil {
+			resp["output"] = "Error: " + execErr.Error()
+			resp["exit_code"] = -1
+		} else {
+			resp["output"] = result.Output
+			resp["exit_code"] = result.ExitCode
+		}
+
+		if err := conn.WriteJSON(resp); err != nil {
+			return
+		}
+	}
 }
 
 // --- Helpers ---

@@ -13,7 +13,7 @@ import (
 type Provider interface {
 	ListContainers(ctx context.Context) ([]models.Container, error)
 	InspectContainer(ctx context.Context, containerID string) (*models.ContainerDetail, error)
-	ContainerLogs(ctx context.Context, containerID string, tail int) (io.ReadCloser, error)
+	ContainerLogs(ctx context.Context, containerID string, tail int, follow bool) (io.ReadCloser, error)
 	ExecContainer(ctx context.Context, containerID string, cmd []string) (*models.ExecResponse, error)
 }
 

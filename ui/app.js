@@ -1,8 +1,16 @@
 // Container Hub UI
 const API = location.origin;
+const WS_BASE = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host;
+
 let allContainers = [];
 let environments = [];
-let currentContainer = null; // {envID, containerID}
+let currentContainer = null; // {envID, containerID, name}
+
+// Active WebSocket connections
+let logStreamWS = null;
+let shellWS = null;
+let shellHistory = [];
+let shellHistoryIdx = -1;
 
 // --- Tabs ---
 document.querySelectorAll('.tab').forEach(btn => {
@@ -24,10 +32,14 @@ document.querySelectorAll('.side-tab').forEach(btn => {
     document.getElementById('side-' + btn.dataset.side).classList.add('active');
     if (btn.dataset.side === 'logs' && currentContainer) fetchLogs();
     if (btn.dataset.side === 'inspect' && currentContainer) fetchInspect();
+    if (btn.dataset.side === 'shell' && currentContainer) initShell();
   });
 });
 
-// --- Load Containers ---
+// ============================================================
+// Containers
+// ============================================================
+
 async function loadContainers() {
   const envFilter = document.getElementById('env-filter').value;
   const url = envFilter ? `${API}/api/containers?env=${envFilter}` : `${API}/api/containers`;
@@ -81,13 +93,16 @@ function renderContainers() {
       <td class="actions">
         <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','inspect')">Inspect</button>
         <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','logs')">Logs</button>
-        <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','exec')">Exec</button>
+        <button class="btn btn-sm" onclick="openPanel('${esc(c.env_id)}','${esc(c.id)}','${esc(c.name)}','shell')">Shell</button>
       </td>
     </tr>
   `).join('');
 }
 
-// --- Load Environments ---
+// ============================================================
+// Environments
+// ============================================================
+
 async function loadEnvironments() {
   try {
     const resp = await fetch(`${API}/api/environments`);
@@ -107,16 +122,11 @@ function renderEnvironments() {
   }
   grid.innerHTML = environments.map(e => `
     <div class="env-card">
-      <h4>
-        <span class="status-dot ${e.online ? 'online' : 'offline'}"></span>
-        ${esc(e.name)}
-      </h4>
+      <h4><span class="status-dot ${e.online ? 'online' : 'offline'}"></span>${esc(e.name)}</h4>
       <div class="meta">Type: ${esc(e.type)}</div>
       <div class="meta">Endpoint: ${esc(e.endpoint || '(via tunnel)')}</div>
       <div class="meta">${e.tunnel ? 'Tunnel: ' + (e.online ? 'Connected' : 'Disconnected') : 'Direct connection'}</div>
-      <div class="env-actions">
-        <button class="btn btn-sm" onclick="removeEnv('${esc(e.id)}')">Remove</button>
-      </div>
+      <div class="env-actions"><button class="btn btn-sm" onclick="removeEnv('${esc(e.id)}')">Remove</button></div>
     </div>
   `).join('');
 }
@@ -131,7 +141,6 @@ function populateEnvFilter() {
   select.value = current;
 }
 
-// --- Add Environment ---
 document.getElementById('add-env-btn').addEventListener('click', () => {
   document.getElementById('add-env-form').classList.remove('hidden');
 });
@@ -150,18 +159,12 @@ document.getElementById('env-save').addEventListener('click', async () => {
   if (!env.name) return alert('Name is required');
   try {
     await fetch(`${API}/api/environments`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(env),
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(env),
     });
     document.getElementById('add-env-form').classList.add('hidden');
-    document.getElementById('env-name').value = '';
-    document.getElementById('env-endpoint').value = '';
-    document.getElementById('env-token').value = '';
+    ['env-name','env-endpoint','env-token'].forEach(id => document.getElementById(id).value = '');
     loadEnvironments();
-  } catch (e) {
-    alert('Failed to add environment: ' + e.message);
-  }
+  } catch (e) { alert('Failed: ' + e.message); }
 });
 
 async function removeEnv(id) {
@@ -170,13 +173,19 @@ async function removeEnv(id) {
   loadEnvironments();
 }
 
-// --- Side Panel ---
+// ============================================================
+// Side Panel
+// ============================================================
+
 function openPanel(envID, containerID, name, tab) {
-  currentContainer = {envID, containerID};
+  // Close previous connections
+  closeLogStream();
+  closeShell();
+
+  currentContainer = {envID, containerID, name};
   document.getElementById('side-title').textContent = name;
   document.getElementById('side-panel').classList.remove('hidden');
 
-  // Activate the requested tab
   document.querySelectorAll('.side-tab').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.side-body').forEach(b => b.classList.remove('active'));
   document.querySelector(`.side-tab[data-side="${tab}"]`).classList.add('active');
@@ -184,16 +193,19 @@ function openPanel(envID, containerID, name, tab) {
 
   if (tab === 'inspect') fetchInspect();
   if (tab === 'logs') fetchLogs();
-  if (tab === 'exec') {
-    document.getElementById('exec-output').textContent = '';
-    document.getElementById('exec-cmd').value = '';
-  }
+  if (tab === 'shell') initShell();
 }
 
 document.getElementById('side-close').addEventListener('click', () => {
   document.getElementById('side-panel').classList.add('hidden');
+  closeLogStream();
+  closeShell();
   currentContainer = null;
 });
+
+// ============================================================
+// Inspect
+// ============================================================
 
 async function fetchInspect() {
   if (!currentContainer) return;
@@ -204,10 +216,12 @@ async function fetchInspect() {
     const resp = await fetch(`${API}/api/containers/${envID}/${containerID}`);
     const data = await resp.json();
     out.textContent = JSON.stringify(data, null, 2);
-  } catch (e) {
-    out.textContent = 'Error: ' + e.message;
-  }
+  } catch (e) { out.textContent = 'Error: ' + e.message; }
 }
+
+// ============================================================
+// Logs (fetch + stream)
+// ============================================================
 
 async function fetchLogs() {
   if (!currentContainer) return;
@@ -219,55 +233,211 @@ async function fetchLogs() {
     const resp = await fetch(`${API}/api/containers/${envID}/${containerID}/logs?tail=${tail}`);
     out.textContent = await resp.text();
     out.scrollTop = out.scrollHeight;
-  } catch (e) {
-    out.textContent = 'Error: ' + e.message;
+  } catch (e) { out.textContent = 'Error: ' + e.message; }
+}
+
+function toggleLogStream() {
+  if (logStreamWS) {
+    closeLogStream();
+  } else {
+    startLogStream();
   }
 }
 
-document.getElementById('log-refresh').addEventListener('click', fetchLogs);
+function startLogStream() {
+  if (!currentContainer || logStreamWS) return;
+  const {envID, containerID} = currentContainer;
+  const tail = document.getElementById('log-tail').value || 100;
+  const out = document.getElementById('log-output');
 
-// --- Exec ---
-document.getElementById('exec-run').addEventListener('click', runExec);
-document.getElementById('exec-cmd').addEventListener('keydown', e => {
-  if (e.key === 'Enter') runExec();
+  logStreamWS = new WebSocket(`${WS_BASE}/ws/logs/${envID}/${containerID}?tail=${tail}`);
+
+  logStreamWS.onopen = () => {
+    updateStreamUI(true);
+    out.textContent = ''; // Clear for streaming
+  };
+
+  logStreamWS.onmessage = (evt) => {
+    out.textContent += evt.data;
+    // Auto-scroll to bottom
+    out.scrollTop = out.scrollHeight;
+  };
+
+  logStreamWS.onclose = () => {
+    updateStreamUI(false);
+    logStreamWS = null;
+  };
+
+  logStreamWS.onerror = () => {
+    out.textContent += '\n[stream error]\n';
+    closeLogStream();
+  };
+}
+
+function closeLogStream() {
+  if (logStreamWS) {
+    logStreamWS.close();
+    logStreamWS = null;
+  }
+  updateStreamUI(false);
+}
+
+function updateStreamUI(live) {
+  const badge = document.getElementById('log-stream-status');
+  const btn = document.getElementById('log-stream-toggle');
+  if (live) {
+    badge.textContent = 'Live';
+    badge.className = 'stream-badge live';
+    btn.innerHTML = '&#9632; Stop';
+    btn.classList.add('active');
+  } else {
+    badge.textContent = 'Stopped';
+    badge.className = 'stream-badge off';
+    btn.innerHTML = '&#9654; Stream';
+    btn.classList.remove('active');
+  }
+}
+
+document.getElementById('log-fetch').addEventListener('click', () => {
+  closeLogStream();
+  fetchLogs();
+});
+document.getElementById('log-stream-toggle').addEventListener('click', toggleLogStream);
+
+// ============================================================
+// Shell (WebSocket-based interactive)
+// ============================================================
+
+function initShell() {
+  if (!currentContainer) return;
+  closeShell();
+
+  const termOutput = document.getElementById('term-output');
+  const termInput = document.getElementById('term-input');
+  termOutput.innerHTML = '';
+  shellHistory = [];
+  shellHistoryIdx = -1;
+
+  const {envID, containerID, name} = currentContainer;
+  shellWS = new WebSocket(`${WS_BASE}/ws/shell/${envID}/${containerID}`);
+
+  shellWS.onopen = () => {
+    termInput.focus();
+  };
+
+  shellWS.onmessage = (evt) => {
+    try {
+      const data = JSON.parse(evt.data);
+      if (data.type === 'output') {
+        appendTermOutput(data.output, data.exit_code);
+      }
+    } catch (e) {
+      appendTermOutput(evt.data, 0);
+    }
+    termOutput.scrollTop = termOutput.scrollHeight;
+  };
+
+  shellWS.onclose = () => {
+    appendTermInfo('Connection closed.');
+    shellWS = null;
+  };
+
+  shellWS.onerror = () => {
+    appendTermInfo('Connection error.');
+  };
+}
+
+function closeShell() {
+  if (shellWS) {
+    shellWS.close();
+    shellWS = null;
+  }
+}
+
+function appendTermOutput(text, exitCode) {
+  const termOutput = document.getElementById('term-output');
+  if (!text) return;
+  const span = document.createElement('span');
+  span.textContent = text;
+  if (exitCode && exitCode !== 0) {
+    span.className = 'term-err';
+  }
+  termOutput.appendChild(span);
+  // Add newline if needed
+  if (!text.endsWith('\n')) {
+    termOutput.appendChild(document.createTextNode('\n'));
+  }
+}
+
+function appendTermCmd(cmd) {
+  const termOutput = document.getElementById('term-output');
+  const line = document.createElement('span');
+  line.className = 'term-cmd';
+  line.textContent = '$ ' + cmd + '\n';
+  termOutput.appendChild(line);
+}
+
+function appendTermInfo(text) {
+  const termOutput = document.getElementById('term-output');
+  const span = document.createElement('span');
+  span.className = 'term-info';
+  span.textContent = text + '\n';
+  termOutput.appendChild(span);
+}
+
+document.getElementById('term-input').addEventListener('keydown', (e) => {
+  const input = document.getElementById('term-input');
+
+  if (e.key === 'Enter') {
+    const cmd = input.value.trim();
+    if (!cmd || !shellWS || shellWS.readyState !== WebSocket.OPEN) return;
+
+    appendTermCmd(cmd);
+    shellHistory.push(cmd);
+    shellHistoryIdx = shellHistory.length;
+
+    shellWS.send(JSON.stringify({cmd}));
+    input.value = '';
+  }
+
+  // Command history: up/down arrows
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (shellHistoryIdx > 0) {
+      shellHistoryIdx--;
+      input.value = shellHistory[shellHistoryIdx];
+    }
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (shellHistoryIdx < shellHistory.length - 1) {
+      shellHistoryIdx++;
+      input.value = shellHistory[shellHistoryIdx];
+    } else {
+      shellHistoryIdx = shellHistory.length;
+      input.value = '';
+    }
+  }
 });
 
-async function runExec() {
-  if (!currentContainer) return;
-  const cmdStr = document.getElementById('exec-cmd').value.trim();
-  if (!cmdStr) return;
-  const out = document.getElementById('exec-output');
-  out.textContent = '$ ' + cmdStr + '\n\nRunning…';
+// Focus terminal input when clicking anywhere in the terminal
+document.getElementById('terminal').addEventListener('click', () => {
+  document.getElementById('term-input').focus();
+});
 
-  // Split command simply by spaces (good enough for most troubleshooting)
-  const cmd = ['sh', '-c', cmdStr];
+// ============================================================
+// Refresh & Filters
+// ============================================================
 
-  try {
-    const {envID, containerID} = currentContainer;
-    const resp = await fetch(`${API}/api/containers/${envID}/${containerID}/exec`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({cmd}),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      out.textContent = '$ ' + cmdStr + '\n\nError: ' + data.error;
-    } else {
-      out.textContent = '$ ' + cmdStr + '\n\n' + (data.output || '(no output)') +
-        (data.exit_code !== 0 ? '\n\n[exit code: ' + data.exit_code + ']' : '');
-    }
-  } catch (e) {
-    out.textContent = '$ ' + cmdStr + '\n\nError: ' + e.message;
-  }
-}
-
-// --- Refresh / Filters ---
 document.getElementById('refresh-btn').addEventListener('click', loadContainers);
 document.getElementById('search').addEventListener('input', renderContainers);
 document.getElementById('state-filter').addEventListener('change', renderContainers);
 document.getElementById('env-filter').addEventListener('change', loadContainers);
 
-// --- Escape HTML ---
+// ============================================================
+// Helpers
+// ============================================================
+
 function esc(str) {
   if (!str) return '';
   const d = document.createElement('div');
@@ -275,10 +445,12 @@ function esc(str) {
   return d.innerHTML;
 }
 
-// --- Init ---
+// ============================================================
+// Init
+// ============================================================
+
 (async function init() {
   await loadEnvironments();
   loadContainers();
-  // Auto-refresh every 30s
   setInterval(loadContainers, 30000);
 })();

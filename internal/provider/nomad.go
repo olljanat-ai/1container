@@ -186,10 +186,13 @@ func (n *NomadProvider) InspectContainer(ctx context.Context, id string) (*model
 	return detail, nil
 }
 
-func (n *NomadProvider) ContainerLogs(ctx context.Context, id string, tail int) (io.ReadCloser, error) {
+func (n *NomadProvider) ContainerLogs(ctx context.Context, id string, tail int, follow bool) (io.ReadCloser, error) {
 	allocID, taskName := parseNomadID(id)
 	path := fmt.Sprintf("/v1/client/fs/logs/%s?task=%s&type=stderr&origin=end&offset=50000&plain=true",
 		allocID, taskName)
+	if follow {
+		path += "&follow=true"
+	}
 	resp, err := n.do(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err

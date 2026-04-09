@@ -56,7 +56,6 @@
       </div>
       <div id="env-list" class="env-grid"></div>
 
-      <!-- Add Environment Form -->
       <div id="add-env-form" class="modal hidden">
         <div class="modal-content">
           <h3>Add Environment</h3>
@@ -81,7 +80,7 @@
     </section>
   </main>
 
-  <!-- Side Panel (Logs / Inspect / Exec) -->
+  <!-- Side Panel -->
   <aside id="side-panel" class="side-panel hidden">
     <div class="side-header">
       <h3 id="side-title">Container</h3>
@@ -90,24 +89,35 @@
     <div class="side-tabs">
       <button class="side-tab active" data-side="inspect">Inspect</button>
       <button class="side-tab" data-side="logs">Logs</button>
-      <button class="side-tab" data-side="exec">Exec</button>
+      <button class="side-tab" data-side="shell">Shell</button>
     </div>
+
+    <!-- Inspect -->
     <div id="side-inspect" class="side-body active">
       <pre id="inspect-output">Loading…</pre>
     </div>
+
+    <!-- Logs -->
     <div id="side-logs" class="side-body">
       <div class="log-toolbar">
-        <label>Lines: <input type="number" id="log-tail" value="200" min="10" max="5000"></label>
-        <button class="btn" id="log-refresh">Refresh</button>
+        <label>Tail: <input type="number" id="log-tail" value="200" min="10" max="5000"></label>
+        <button class="btn btn-sm" id="log-fetch">Fetch</button>
+        <div class="spacer"></div>
+        <span id="log-stream-status" class="stream-badge off">Stopped</span>
+        <button class="btn btn-sm btn-stream" id="log-stream-toggle">&#9654; Stream</button>
       </div>
       <pre id="log-output" class="log-view"></pre>
     </div>
-    <div id="side-exec" class="side-body">
-      <div class="exec-input">
-        <input type="text" id="exec-cmd" placeholder="e.g. ls -la /tmp">
-        <button class="btn btn-primary" id="exec-run">Run</button>
+
+    <!-- Shell -->
+    <div id="side-shell" class="side-body">
+      <div id="terminal" class="terminal">
+        <div id="term-output" class="term-output"></div>
+        <div class="term-input-line">
+          <span class="term-prompt">$</span>
+          <input type="text" id="term-input" class="term-input" placeholder="Type a command…" autocomplete="off" spellcheck="false">
+        </div>
       </div>
-      <pre id="exec-output" class="log-view"></pre>
     </div>
   </aside>
 

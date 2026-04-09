@@ -50,8 +50,17 @@ func (h *Hub) Transport(envID string) http.RoundTripper {
 	return &tunnelTransport{hub: h, envID: envID}
 }
 
+// StreamLogs opens a streaming log request through the tunnel and returns a reader.
+func (h *Hub) StreamLogs(envID string, req *models.TunnelRequest) (io.ReadCloser, int, error) {
+	ac, ok := h.get(envID)
+	if !ok {
+		return nil, 0, fmt.Errorf("no tunnel for environment %s", envID)
+	}
+	req.Stream = true
+	return ac.RoundTripStream(req)
+}
+
 // HandleConnect is the WebSocket handler agents connect to.
-// Expected query params: env_id, env_name, env_type, token (shared secret).
 func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 	envID := r.URL.Query().Get("env_id")
 	envName := r.URL.Query().Get("env_name")
@@ -76,7 +85,6 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.Lock()
-	// Close previous connection if exists
 	if old, ok := h.tunnels[envID]; ok {
 		old.conn.Close()
 	}
@@ -88,7 +96,6 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 		h.onJoin(envID)
 	}
 
-	// Read loop – receives responses from agent
 	ac.readLoop()
 
 	h.mu.Lock()
@@ -103,7 +110,6 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// get returns the agent connection for an environment.
 func (h *Hub) get(envID string) (*AgentConn, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -130,6 +136,13 @@ func (ac *AgentConn) readLoop() {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("tunnel read error (%s): %v", ac.envID, err)
 			}
+			// Close all pending channels on disconnect
+			ac.mu.Lock()
+			for id, ch := range ac.pending {
+				close(ch)
+				delete(ac.pending, id)
+			}
+			ac.mu.Unlock()
 			return
 		}
 		var resp models.TunnelResponse
@@ -140,16 +153,37 @@ func (ac *AgentConn) readLoop() {
 		ac.mu.Lock()
 		ch, ok := ac.pending[resp.ID]
 		if ok {
-			delete(ac.pending, resp.ID)
+			// For streaming chunks, keep the channel open
+			// Remove only for non-chunk responses or Done signals
+			if !resp.Chunk || resp.Done {
+				delete(ac.pending, resp.ID)
+			}
 		}
 		ac.mu.Unlock()
 		if ok {
-			ch <- &resp
+			select {
+			case ch <- &resp:
+			default:
+				// Channel full – drop chunk to avoid blocking
+			}
+			// Close channel after final message
+			if resp.Done || (!resp.Chunk && resp.Error == "") {
+				close(ch)
+			}
 		}
 	}
 }
 
-// RoundTrip sends an HTTP request through the tunnel and waits for a response.
+// sendCancel tells the agent to stop a streaming request.
+func (ac *AgentConn) sendCancel(reqID string) {
+	msg := models.TunnelCancel{ID: reqID, Cancel: true}
+	data, _ := json.Marshal(msg)
+	ac.writeMu.Lock()
+	ac.conn.WriteMessage(websocket.TextMessage, data)
+	ac.writeMu.Unlock()
+}
+
+// RoundTrip sends an HTTP request through the tunnel and waits for a single response.
 func (ac *AgentConn) RoundTrip(req *models.TunnelRequest, timeout time.Duration) (*models.TunnelResponse, error) {
 	ch := make(chan *models.TunnelResponse, 1)
 	ac.mu.Lock()
@@ -170,7 +204,10 @@ func (ac *AgentConn) RoundTrip(req *models.TunnelRequest, timeout time.Duration)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	select {
-	case resp := <-ch:
+	case resp, ok := <-ch:
+		if !ok {
+			return nil, fmt.Errorf("tunnel connection closed")
+		}
 		return resp, nil
 	case <-ctx.Done():
 		ac.mu.Lock()
@@ -178,6 +215,67 @@ func (ac *AgentConn) RoundTrip(req *models.TunnelRequest, timeout time.Duration)
 		ac.mu.Unlock()
 		return nil, fmt.Errorf("tunnel request timeout")
 	}
+}
+
+// RoundTripStream sends a streaming request and returns a reader for the chunked response.
+func (ac *AgentConn) RoundTripStream(req *models.TunnelRequest) (io.ReadCloser, int, error) {
+	ch := make(chan *models.TunnelResponse, 128)
+	ac.mu.Lock()
+	ac.pending[req.ID] = ch
+	ac.mu.Unlock()
+
+	data, _ := json.Marshal(req)
+	ac.writeMu.Lock()
+	err := ac.conn.WriteMessage(websocket.TextMessage, data)
+	ac.writeMu.Unlock()
+	if err != nil {
+		ac.mu.Lock()
+		delete(ac.pending, req.ID)
+		ac.mu.Unlock()
+		return nil, 0, fmt.Errorf("tunnel write: %w", err)
+	}
+
+	// Wait for the first response (contains status code and headers)
+	first, ok := <-ch
+	if !ok {
+		return nil, 0, fmt.Errorf("tunnel connection closed")
+	}
+	if first.Error != "" {
+		return nil, 0, fmt.Errorf("agent error: %s", first.Error)
+	}
+
+	pr, pw := io.Pipe()
+	reqID := req.ID
+
+	go func() {
+		defer pw.Close()
+		// Write data from first message
+		if len(first.Body) > 0 {
+			pw.Write(first.Body)
+		}
+		if first.Done || !first.Chunk {
+			return
+		}
+		// Continue reading chunks
+		for resp := range ch {
+			if resp.Error != "" {
+				pw.CloseWithError(fmt.Errorf("agent error: %s", resp.Error))
+				return
+			}
+			if len(resp.Body) > 0 {
+				if _, err := pw.Write(resp.Body); err != nil {
+					// Reader closed – cancel the stream
+					ac.sendCancel(reqID)
+					return
+				}
+			}
+			if resp.Done {
+				return
+			}
+		}
+	}()
+
+	return pr, first.StatusCode, nil
 }
 
 // tunnelTransport implements http.RoundTripper over the WebSocket tunnel.

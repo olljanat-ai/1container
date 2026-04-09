@@ -193,9 +193,12 @@ func (k *KubeProvider) InspectContainer(ctx context.Context, id string) (*models
 	return detail, nil
 }
 
-func (k *KubeProvider) ContainerLogs(ctx context.Context, id string, tail int) (io.ReadCloser, error) {
+func (k *KubeProvider) ContainerLogs(ctx context.Context, id string, tail int, follow bool) (io.ReadCloser, error) {
 	ns, name := parseK8sID(id)
 	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/log?tailLines=%d&timestamps=true", ns, name, tail)
+	if follow {
+		path += "&follow=true"
+	}
 	resp, err := k.do(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err

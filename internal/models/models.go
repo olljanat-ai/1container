@@ -69,6 +69,7 @@ type TunnelRequest struct {
 	URL     string              `json:"url"`
 	Headers map[string][]string `json:"headers,omitempty"`
 	Body    []byte              `json:"body,omitempty"`
+	Stream  bool                `json:"stream,omitempty"` // request chunked streaming response
 }
 
 // TunnelResponse is returned by the agent.
@@ -78,6 +79,14 @@ type TunnelResponse struct {
 	Headers    map[string][]string `json:"headers,omitempty"`
 	Body       []byte              `json:"body,omitempty"`
 	Error      string              `json:"error,omitempty"`
+	Chunk      bool                `json:"chunk,omitempty"` // true for streaming data chunks
+	Done       bool                `json:"done,omitempty"`  // true for final stream message
+}
+
+// TunnelCancel tells the agent to stop a streaming request.
+type TunnelCancel struct {
+	ID     string `json:"id"`
+	Cancel bool   `json:"cancel"`
 }
 
 // ExecRequest is the body of the exec endpoint.
