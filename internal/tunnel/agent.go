@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"container-hub/internal/models"
 	"context"
 	"crypto/tls"
@@ -205,7 +206,7 @@ func (a *AgentClient) doHTTP(req *models.TunnelRequest) *models.TunnelResponse {
 	targetURL := a.LocalEndpoint + req.URL
 	var body io.Reader
 	if len(req.Body) > 0 {
-		body = strings.NewReader(string(req.Body))
+		body = bytes.NewReader(req.Body)
 	}
 	httpReq, err := http.NewRequest(req.Method, targetURL, body)
 	if err != nil {

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"container-hub/internal/models"
 	"context"
 	"encoding/json"
@@ -207,7 +208,7 @@ func (n *NomadProvider) ExecContainer(ctx context.Context, id string, cmd []stri
 	payloadBytes, _ := json.Marshal(payload)
 	path := fmt.Sprintf("/v1/client/allocation/%s/exec?task=%s", allocID, taskName)
 	path += n.nsParam("&")
-	resp, err := n.do(ctx, "POST", path, strings.NewReader(string(payloadBytes)))
+	resp, err := n.do(ctx, "POST", path, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("nomad exec: %w", err)
 	}
