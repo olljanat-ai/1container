@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container-hub/internal/auth"
 	"container-hub/internal/models"
 	"container-hub/internal/provider"
 	"container-hub/internal/tunnel"
@@ -22,41 +23,54 @@ var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+type contextKey string
+
+const userContextKey contextKey = "user"
+
 // Server is the central API server.
 type Server struct {
-	mu       sync.RWMutex
-	clusters map[string]*models.Cluster     // clusterID -> cluster (auto-registered by agents)
-	envs     map[string]*models.Environment // envID -> environment (configured by admin)
-	hub      *tunnel.Hub
-	mux      *http.ServeMux
+	mu          sync.RWMutex
+	clusters    map[string]*models.Cluster
+	envs        map[string]*models.Environment
+	hub         *tunnel.Hub
+	mux         *http.ServeMux
+	auth        *auth.Manager
+	agentSecret string // shared secret for agent tunnel authentication
 }
 
 // NewServer creates and wires the API server.
-func NewServer(hub *tunnel.Hub) *Server {
+func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string) *Server {
 	s := &Server{
-		clusters: make(map[string]*models.Cluster),
-		envs:     make(map[string]*models.Environment),
-		hub:      hub,
+		clusters:    make(map[string]*models.Cluster),
+		envs:        make(map[string]*models.Environment),
+		hub:         hub,
+		auth:        authMgr,
+		agentSecret: agentSecret,
 	}
 	mux := http.NewServeMux()
 
+	// Public endpoints (no auth required)
+	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("POST /api/logout", s.logout)
+	mux.HandleFunc("GET /api/auth/check", s.authCheck)
+
 	// Clusters (read-only, auto-registered by agents)
-	mux.HandleFunc("GET /api/clusters", s.listClusters)
+	mux.HandleFunc("GET /api/clusters", s.requireAuth(s.listClusters))
 
 	// Environments (CRUD)
-	mux.HandleFunc("GET /api/environments", s.listEnvironments)
-	mux.HandleFunc("POST /api/environments", s.addEnvironment)
-	mux.HandleFunc("DELETE /api/environments/{id}", s.removeEnvironment)
+	mux.HandleFunc("GET /api/environments", s.requireAuth(s.listEnvironments))
+	mux.HandleFunc("POST /api/environments", s.requireAuth(s.addEnvironment))
+	mux.HandleFunc("DELETE /api/environments/{id}", s.requireAuth(s.removeEnvironment))
 
 	// Containers
-	mux.HandleFunc("GET /api/containers", s.listContainers)
-	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}", s.inspectOrAction)
-	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}", s.execContainer)
+	mux.HandleFunc("GET /api/containers", s.requireAuth(s.listContainers))
+	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}", s.requireAuth(s.inspectOrAction))
+	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}", s.requireAuth(s.execContainer))
 
-	// WebSocket endpoints
+	// WebSocket endpoints (auth checked inside)
 	mux.HandleFunc("/ws/logs/{envID}/{containerID...}", s.wsLogs)
 	mux.HandleFunc("/ws/shell/{envID}/{containerID...}", s.wsShell)
-	mux.HandleFunc("/ws/tunnel", hub.HandleConnect)
+	mux.HandleFunc("/ws/tunnel", s.requireAgentAuth(hub.HandleConnect))
 
 	// UI
 	mux.Handle("/", http.FileServer(http.Dir("ui")))
@@ -89,9 +103,119 @@ func (s *Server) RegisterEnvironment(env *models.Environment) {
 	s.envs[env.ID] = env
 }
 
+// RemoveDiscoveredEnvironment removes a discovered environment by ID.
+func (s *Server) RemoveDiscoveredEnvironment(envID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Only remove auto-discovered environments (prefixed with "auto-")
+	if strings.HasPrefix(envID, "auto-") {
+		delete(s.envs, envID)
+	}
+}
+
+// GetClusters returns a copy of all known clusters.
+func (s *Server) GetClusters() []*models.Cluster {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	list := make([]*models.Cluster, 0, len(s.clusters))
+	for _, c := range s.clusters {
+		cc := *c
+		list = append(list, &cc)
+	}
+	return list
+}
+
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
 	return corsMiddleware(s.mux)
+}
+
+// --- Auth middleware ---------------------------------------------------------
+
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := s.auth.UserFromRequest(r)
+		if err != nil {
+			writeErr(w, 401, "unauthorized")
+			return
+		}
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+func (s *Server) requireAgentAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.agentSecret != "" {
+			token := r.URL.Query().Get("secret")
+			if token != s.agentSecret {
+				http.Error(w, "unauthorized: invalid agent secret", 401)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+func userFromContext(ctx context.Context) *auth.User {
+	u, _ := ctx.Value(userContextKey).(*auth.User)
+	return u
+}
+
+// --- Auth endpoints ---------------------------------------------------------
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid JSON")
+		return
+	}
+	token, err := s.auth.Authenticate(req.Username, req.Password)
+	if err != nil {
+		writeErr(w, 401, "invalid credentials")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400,
+	})
+	user, _ := s.auth.ValidateToken(token)
+	isAdmin := user != nil && user.Admin
+	writeJSON(w, 200, map[string]interface{}{"token": token, "username": req.Username, "admin": isAdmin})
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+	writeJSON(w, 200, map[string]string{"status": "logged out"})
+}
+
+func (s *Server) authCheck(w http.ResponseWriter, r *http.Request) {
+	user, err := s.auth.UserFromRequest(r)
+	if err != nil {
+		writeErr(w, 401, "unauthorized")
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{
+		"username": user.Username,
+		"admin":    user.Admin,
+	})
 }
 
 // --- Cluster handlers --------------------------------------------------------
@@ -111,9 +235,14 @@ func (s *Server) listClusters(w http.ResponseWriter, r *http.Request) {
 // --- Environment handlers ----------------------------------------------------
 
 func (s *Server) listEnvironments(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+
 	s.mu.RLock()
 	list := make([]*models.Environment, 0, len(s.envs))
 	for _, env := range s.envs {
+		if !s.auth.CanAccessEnvironment(user, env.Name) {
+			continue
+		}
 		e := *env
 		if c, ok := s.clusters[e.ClusterID]; ok {
 			e.ClusterName = c.Name
@@ -127,6 +256,13 @@ func (s *Server) listEnvironments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addEnvironment(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+	user := userFromContext(r.Context())
+	if !user.Admin {
+		writeErr(w, 403, "admin access required")
+		return
+	}
+
 	var env models.Environment
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		writeErr(w, 400, "invalid JSON: "+err.Error())
@@ -145,7 +281,6 @@ func (s *Server) addEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Docker Swarm has no namespace support
 	if cluster.Type == models.ClusterDockerSwarm {
 		env.Namespace = ""
 	}
@@ -165,6 +300,12 @@ func (s *Server) addEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeEnvironment(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	if !user.Admin {
+		writeErr(w, 403, "admin access required")
+		return
+	}
+
 	id := r.PathValue("id")
 	s.mu.Lock()
 	_, ok := s.envs[id]
@@ -180,12 +321,16 @@ func (s *Server) removeEnvironment(w http.ResponseWriter, r *http.Request) {
 // --- Container handlers ------------------------------------------------------
 
 func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
 	envFilter := r.URL.Query().Get("env")
 
 	s.mu.RLock()
 	envsCopy := make([]*models.Environment, 0)
 	for _, env := range s.envs {
 		if envFilter != "" && env.ID != envFilter {
+			continue
+		}
+		if !s.auth.CanAccessEnvironment(user, env.Name) {
 			continue
 		}
 		envsCopy = append(envsCopy, env)
@@ -257,6 +402,13 @@ func (s *Server) inspectOrAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
+
+	user := userFromContext(r.Context())
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		writeErr(w, 403, "access denied")
+		return
+	}
+
 	p := s.providerFor(env)
 	if p == nil {
 		writeErr(w, 502, "cluster not available")
@@ -288,6 +440,13 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
+
+	user := userFromContext(r.Context())
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		writeErr(w, 403, "access denied")
+		return
+	}
+
 	p := s.providerFor(env)
 	if p == nil {
 		writeErr(w, 502, "cluster not available")
@@ -310,6 +469,7 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	envID := r.PathValue("envID")
 	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/exec")
 
@@ -328,6 +488,13 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
+
+	user := userFromContext(r.Context())
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		writeErr(w, 403, "access denied")
+		return
+	}
+
 	p := s.providerFor(env)
 	if p == nil {
 		writeErr(w, 502, "cluster not available")
@@ -348,6 +515,19 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 // --- WebSocket: streaming logs -----------------------------------------------
 
 func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
+	// Auth check for WebSocket
+	user, err := s.auth.UserFromRequest(r)
+	if err != nil {
+		// Try query parameter token for WebSocket
+		if t := r.URL.Query().Get("token"); t != "" {
+			user, err = s.auth.ValidateToken(t)
+		}
+		if err != nil {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+	}
+
 	envID := r.PathValue("envID")
 	containerID := r.PathValue("containerID")
 
@@ -359,6 +539,10 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 	env := s.getEnv(envID)
 	if env == nil {
 		http.Error(w, "environment not found", 404)
+		return
+	}
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		http.Error(w, "access denied", 403)
 		return
 	}
 
@@ -410,12 +594,28 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 // --- WebSocket: interactive shell --------------------------------------------
 
 func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
+	// Auth check for WebSocket
+	user, err := s.auth.UserFromRequest(r)
+	if err != nil {
+		if t := r.URL.Query().Get("token"); t != "" {
+			user, err = s.auth.ValidateToken(t)
+		}
+		if err != nil {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+	}
+
 	envID := r.PathValue("envID")
 	containerID := r.PathValue("containerID")
 
 	env := s.getEnv(envID)
 	if env == nil {
 		http.Error(w, "environment not found", 404)
+		return
+	}
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		http.Error(w, "access denied", 403)
 		return
 	}
 
@@ -495,9 +695,13 @@ func (s *Server) providerFor(env *models.Environment) provider.Provider {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return

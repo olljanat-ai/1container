@@ -7,109 +7,134 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <div class="logo">&#9638; Container Hub</div>
-    <nav>
-      <button class="tab active" data-tab="containers">Containers</button>
-      <button class="tab" data-tab="environments">Environments</button>
-      <button class="tab" data-tab="clusters">Clusters</button>
-    </nav>
-  </header>
+  <!-- Login Page -->
+  <div id="login-page" class="login-page">
+    <div class="login-card">
+      <div class="login-logo">&#9638; Container Hub</div>
+      <form id="login-form" autocomplete="on">
+        <label>Username
+          <input type="text" id="login-username" placeholder="Username" autocomplete="username" required>
+        </label>
+        <label>Password
+          <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" required>
+        </label>
+        <div id="login-error" class="login-error hidden"></div>
+        <button type="submit" class="btn btn-primary login-btn">Sign In</button>
+      </form>
+    </div>
+  </div>
 
-  <main>
-    <!-- Containers -->
-    <section id="containers" class="panel active">
-      <div class="toolbar">
-        <input type="text" id="search" placeholder="Search containers…">
-        <select id="env-filter"><option value="">All Environments</option></select>
-        <select id="state-filter">
-          <option value="">All States</option>
-          <option value="running">Running</option>
-          <option value="stopped">Stopped</option>
-          <option value="pending">Pending</option>
-        </select>
-        <button id="refresh-btn" class="btn">&#8635; Refresh</button>
+  <!-- Main App (hidden until authenticated) -->
+  <div id="app" class="hidden">
+    <header>
+      <div class="logo">&#9638; Container Hub</div>
+      <nav>
+        <button class="tab active" data-tab="containers">Containers</button>
+        <button class="tab" data-tab="environments">Environments</button>
+        <button class="tab" data-tab="clusters">Clusters</button>
+      </nav>
+      <div class="header-actions">
+        <button id="theme-toggle" class="btn btn-sm theme-toggle" title="Toggle theme">&#9788;</button>
+        <span id="user-info" class="user-info"></span>
+        <button id="logout-btn" class="btn btn-sm">Logout</button>
       </div>
-      <div id="errors-bar" class="errors-bar hidden"></div>
-      <table id="container-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Image</th>
-            <th>State</th>
-            <th>Environment</th>
-            <th>Namespace</th>
-            <th>Node</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="container-body"></tbody>
-      </table>
-      <div id="no-containers" class="empty hidden">No containers found.</div>
-    </section>
+    </header>
 
-    <!-- Environments -->
-    <section id="environments" class="panel">
-      <div class="toolbar">
-        <button id="add-env-btn" class="btn btn-primary">+ Add Environment</button>
+    <main>
+      <!-- Containers -->
+      <section id="containers" class="panel active">
+        <div class="toolbar">
+          <input type="text" id="search" placeholder="Search containers…">
+          <select id="env-filter"><option value="">All Environments</option></select>
+          <select id="state-filter">
+            <option value="">All States</option>
+            <option value="running">Running</option>
+            <option value="stopped">Stopped</option>
+            <option value="pending">Pending</option>
+          </select>
+          <button id="refresh-btn" class="btn">&#8635; Refresh</button>
+        </div>
+        <div id="errors-bar" class="errors-bar hidden"></div>
+        <table id="container-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Image</th>
+              <th>State</th>
+              <th>Environment</th>
+              <th>Namespace</th>
+              <th>Node</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="container-body"></tbody>
+        </table>
+        <div id="no-containers" class="empty hidden">No containers found.</div>
+      </section>
+
+      <!-- Environments -->
+      <section id="environments" class="panel">
+        <div class="toolbar">
+          <button id="add-env-btn" class="btn btn-primary">+ Add Environment</button>
+        </div>
+        <div id="env-list" class="env-grid"></div>
+        <div id="add-env-form" class="modal hidden">
+          <div class="modal-content">
+            <h3>Add Environment</h3>
+            <label>Name <input type="text" id="env-name" placeholder="e.g. Production"></label>
+            <label>Cluster
+              <select id="env-cluster"></select>
+            </label>
+            <label id="env-ns-label">Namespace <input type="text" id="env-namespace" placeholder="e.g. default"></label>
+            <div id="env-ns-hint" class="hint hidden">Docker Swarm does not support namespaces.</div>
+            <div class="form-actions">
+              <button class="btn" id="env-cancel">Cancel</button>
+              <button class="btn btn-primary" id="env-save">Save</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Clusters -->
+      <section id="clusters" class="panel">
+        <p class="hint" style="margin-bottom:16px">Clusters are auto-registered when agents connect. Deploy an agent in each target network.</p>
+        <div id="cluster-list" class="env-grid"></div>
+      </section>
+    </main>
+
+    <!-- Side Panel -->
+    <aside id="side-panel" class="side-panel hidden">
+      <div class="side-header">
+        <h3 id="side-title">Container</h3>
+        <button id="side-close">&times;</button>
       </div>
-      <div id="env-list" class="env-grid"></div>
-      <div id="add-env-form" class="modal hidden">
-        <div class="modal-content">
-          <h3>Add Environment</h3>
-          <label>Name <input type="text" id="env-name" placeholder="e.g. Production"></label>
-          <label>Cluster
-            <select id="env-cluster"></select>
-          </label>
-          <label id="env-ns-label">Namespace <input type="text" id="env-namespace" placeholder="e.g. default"></label>
-          <div id="env-ns-hint" class="hint hidden">Docker Swarm does not support namespaces.</div>
-          <div class="form-actions">
-            <button class="btn" id="env-cancel">Cancel</button>
-            <button class="btn btn-primary" id="env-save">Save</button>
+      <div class="side-tabs">
+        <button class="side-tab active" data-side="inspect">Inspect</button>
+        <button class="side-tab" data-side="logs">Logs</button>
+        <button class="side-tab" data-side="shell">Shell</button>
+      </div>
+      <div id="side-inspect" class="side-body active"><pre id="inspect-output">Loading…</pre></div>
+      <div id="side-logs" class="side-body">
+        <div class="log-toolbar">
+          <label>Tail: <input type="number" id="log-tail" value="200" min="10" max="5000"></label>
+          <button class="btn btn-sm" id="log-fetch">Fetch</button>
+          <div class="spacer"></div>
+          <span id="log-stream-status" class="stream-badge off">Stopped</span>
+          <button class="btn btn-sm btn-stream" id="log-stream-toggle">&#9654; Stream</button>
+        </div>
+        <pre id="log-output" class="log-view"></pre>
+      </div>
+      <div id="side-shell" class="side-body">
+        <div id="terminal" class="terminal">
+          <div id="term-output" class="term-output"></div>
+          <div class="term-input-line">
+            <span class="term-prompt">$</span>
+            <input type="text" id="term-input" class="term-input" placeholder="Type a command…" autocomplete="off" spellcheck="false">
           </div>
         </div>
       </div>
-    </section>
-
-    <!-- Clusters -->
-    <section id="clusters" class="panel">
-      <p class="hint" style="margin-bottom:16px">Clusters are auto-registered when agents connect. Deploy an agent in each target network.</p>
-      <div id="cluster-list" class="env-grid"></div>
-    </section>
-  </main>
-
-  <!-- Side Panel -->
-  <aside id="side-panel" class="side-panel hidden">
-    <div class="side-header">
-      <h3 id="side-title">Container</h3>
-      <button id="side-close">&times;</button>
-    </div>
-    <div class="side-tabs">
-      <button class="side-tab active" data-side="inspect">Inspect</button>
-      <button class="side-tab" data-side="logs">Logs</button>
-      <button class="side-tab" data-side="shell">Shell</button>
-    </div>
-    <div id="side-inspect" class="side-body active"><pre id="inspect-output">Loading…</pre></div>
-    <div id="side-logs" class="side-body">
-      <div class="log-toolbar">
-        <label>Tail: <input type="number" id="log-tail" value="200" min="10" max="5000"></label>
-        <button class="btn btn-sm" id="log-fetch">Fetch</button>
-        <div class="spacer"></div>
-        <span id="log-stream-status" class="stream-badge off">Stopped</span>
-        <button class="btn btn-sm btn-stream" id="log-stream-toggle">&#9654; Stream</button>
-      </div>
-      <pre id="log-output" class="log-view"></pre>
-    </div>
-    <div id="side-shell" class="side-body">
-      <div id="terminal" class="terminal">
-        <div id="term-output" class="term-output"></div>
-        <div class="term-input-line">
-          <span class="term-prompt">$</span>
-          <input type="text" id="term-input" class="term-input" placeholder="Type a command…" autocomplete="off" spellcheck="false">
-        </div>
-      </div>
-    </div>
-  </aside>
+    </aside>
+  </div>
 
   <script src="app.js"></script>
 </body>

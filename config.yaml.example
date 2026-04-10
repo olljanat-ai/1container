@@ -1,0 +1,70 @@
+# Container Hub Configuration
+# Copy this file to config.yaml and adjust as needed.
+
+listen_addr: ":8080"
+
+# JWT secret used for signing authentication tokens.
+# IMPORTANT: Change this to a strong random string in production.
+jwt_secret: "change-me-to-a-random-secret"
+
+# Shared secret that agents must present to connect.
+# If set, agents must pass ?secret=<value> when connecting to /ws/tunnel.
+# Leave empty to allow unauthenticated agent connections (NOT recommended for production).
+agent_secret: "change-me-to-a-random-agent-secret"
+
+# Clusters are registered automatically when agents connect.
+# You do not need to configure clusters here — they appear once an
+# agent establishes a tunnel to the server.
+
+# User accounts. Passwords are bcrypt hashes.
+# Generate a hash: go run ./cmd/server -hash-password 'yourpassword'
+# Default admin password below is "admin".
+users:
+  - username: admin
+    password: "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+    admin: true
+    groups:
+      - platform-team
+
+  - username: developer
+    password: "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+    admin: false
+    groups:
+      - dev-team
+
+  - username: viewer
+    password: "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+    admin: false
+    groups:
+      - readonly
+
+# Groups define which environments users can access.
+# Environment names support wildcard patterns (* matches any characters).
+# Admins bypass group restrictions and see all environments.
+groups:
+  - name: platform-team
+    environments:
+      - "*"
+
+  - name: dev-team
+    environments:
+      - "Staging K8s/*"
+      - "Production K8s/default"
+
+  - name: readonly
+    environments:
+      - "Staging K8s/*"
+
+# Manually configured environments (in addition to auto-discovered ones).
+# Auto-discovery will find Kubernetes namespaces and Nomad namespaces
+# automatically. Use this section for static overrides if needed.
+environments:
+  - id: prod-k8s-default
+    name: Production K8s/default
+    cluster_id: k8s-prod
+    namespace: default
+
+  - id: staging-k8s-default
+    name: Staging K8s/default
+    cluster_id: k8s-staging
+    namespace: default
