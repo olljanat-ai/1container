@@ -8,17 +8,8 @@ listen_addr: ":8080"
 jwt_secret: "change-me-to-a-random-secret"
 
 # Clusters are registered automatically when agents connect.
-# This section is informational and used for reference.
-clusters:
-  - id: k8s-prod
-    name: Production K8s
-    type: kubernetes
-  - id: k8s-staging
-    name: Staging K8s
-    type: kubernetes
-  - id: nomad-prod
-    name: Production Nomad
-    type: nomad
+# You do not need to configure clusters here — they appear once an
+# agent establishes a tunnel to the server.
 
 # User accounts. Passwords are bcrypt hashes.
 # Generate a hash: go run ./cmd/server -hash-password 'yourpassword'
