@@ -13,17 +13,18 @@ rules:
     resources:
       - pods
       - pods/log
-      - pods/exec
       - services
       - namespaces
       - nodes
-      - configmaps
-      - events
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources:
       - pods/exec
     verbs: ["create"]
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources:
       - deployments
