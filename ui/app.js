@@ -123,9 +123,8 @@ async function handleLogin(e) {
       return;
     }
     authToken = data.token;
-    currentUser = {username: data.username, admin: false};
-    // Re-check to get full user info
-    await checkAuth();
+    currentUser = {username: data.username, admin: data.admin || false};
+    showApp();
   } catch (err) {
     errEl.textContent = 'Connection error';
     errEl.classList.remove('hidden');

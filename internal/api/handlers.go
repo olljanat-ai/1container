@@ -171,7 +171,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400,
 	})
-	writeJSON(w, 200, map[string]string{"token": token, "username": req.Username})
+	user, _ := s.auth.ValidateToken(token)
+	isAdmin := user != nil && user.Admin
+	writeJSON(w, 200, map[string]interface{}{"token": token, "username": req.Username, "admin": isAdmin})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
