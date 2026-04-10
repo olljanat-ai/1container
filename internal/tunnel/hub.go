@@ -60,6 +60,10 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster_id, cluster_name and cluster_type required", http.StatusBadRequest)
 		return
 	}
+	if !models.ValidClusterType(models.ClusterType(clusterType)) {
+		http.Error(w, "unsupported cluster_type: "+clusterType, http.StatusBadRequest)
+		return
+	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
