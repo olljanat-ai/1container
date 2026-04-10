@@ -51,8 +51,7 @@ func NewServer(hub *tunnel.Hub) *Server {
 	// Containers
 	mux.HandleFunc("GET /api/containers", s.listContainers)
 	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}", s.inspectOrAction)
-	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}/exec", s.execContainer)
-	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}/logs", s.containerLogs)
+	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}", s.execContainer)
 
 	// WebSocket endpoints
 	mux.HandleFunc("/ws/logs/{envID}/{containerID...}", s.wsLogs)
