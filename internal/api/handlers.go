@@ -29,21 +29,23 @@ const userContextKey contextKey = "user"
 
 // Server is the central API server.
 type Server struct {
-	mu       sync.RWMutex
-	clusters map[string]*models.Cluster
-	envs     map[string]*models.Environment
-	hub      *tunnel.Hub
-	mux      *http.ServeMux
-	auth     *auth.Manager
+	mu          sync.RWMutex
+	clusters    map[string]*models.Cluster
+	envs        map[string]*models.Environment
+	hub         *tunnel.Hub
+	mux         *http.ServeMux
+	auth        *auth.Manager
+	agentSecret string // shared secret for agent tunnel authentication
 }
 
 // NewServer creates and wires the API server.
-func NewServer(hub *tunnel.Hub, authMgr *auth.Manager) *Server {
+func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string) *Server {
 	s := &Server{
-		clusters: make(map[string]*models.Cluster),
-		envs:     make(map[string]*models.Environment),
-		hub:      hub,
-		auth:     authMgr,
+		clusters:    make(map[string]*models.Cluster),
+		envs:        make(map[string]*models.Environment),
+		hub:         hub,
+		auth:        authMgr,
+		agentSecret: agentSecret,
 	}
 	mux := http.NewServeMux()
 
@@ -68,7 +70,7 @@ func NewServer(hub *tunnel.Hub, authMgr *auth.Manager) *Server {
 	// WebSocket endpoints (auth checked inside)
 	mux.HandleFunc("/ws/logs/{envID}/{containerID...}", s.wsLogs)
 	mux.HandleFunc("/ws/shell/{envID}/{containerID...}", s.wsShell)
-	mux.HandleFunc("/ws/tunnel", hub.HandleConnect)
+	mux.HandleFunc("/ws/tunnel", s.requireAgentAuth(hub.HandleConnect))
 
 	// UI
 	mux.Handle("/", http.FileServer(http.Dir("ui")))
@@ -139,6 +141,19 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next(w, r.WithContext(ctx))
+	}
+}
+
+func (s *Server) requireAgentAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.agentSecret != "" {
+			token := r.URL.Query().Get("secret")
+			if token != s.agentSecret {
+				http.Error(w, "unauthorized: invalid agent secret", 401)
+				return
+			}
+		}
+		next(w, r)
 	}
 }
 

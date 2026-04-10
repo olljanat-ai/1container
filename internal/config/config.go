@@ -15,6 +15,7 @@ import (
 type Config struct {
 	ListenAddr   string              `yaml:"listen_addr"`
 	JWTSecret    string              `yaml:"jwt_secret"`
+	AgentSecret  string              `yaml:"agent_secret"`
 	Users        []UserConfig        `yaml:"users"`
 	Groups       []GroupConfig       `yaml:"groups"`
 	Environments []EnvironmentConfig `yaml:"environments"`

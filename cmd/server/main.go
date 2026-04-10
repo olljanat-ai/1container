@@ -63,7 +63,7 @@ func main() {
 		func(id, name string, ctype models.ClusterType) { srv.ClusterJoined(id, name, ctype) },
 		func(id string) { srv.ClusterLeft(id) },
 	)
-	srv = api.NewServer(hub, authMgr)
+	srv = api.NewServer(hub, authMgr, cfg.AgentSecret)
 
 	// Load manually configured environments from YAML config
 	for _, envCfg := range cfg.Environments {
