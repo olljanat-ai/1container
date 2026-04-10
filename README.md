@@ -47,10 +47,10 @@ go build -o bin/container-hub-agent ./cmd/agent/
 ### Run the server
 
 ```bash
-# With a config file
-./bin/container-hub -config environments.json
+# With a YAML config file (see config.yaml.example)
+./bin/container-hub -config config.yaml
 
-# Or with env vars
+# Or with legacy JSON environments
 ENVIRONMENTS='[{"id":"prod","name":"Production","cluster_id":"k8s-prod","namespace":"default"}]' \
   ./bin/container-hub
 
@@ -165,7 +165,8 @@ Environments reference clusters by `cluster_id`. Clusters are auto-registered wh
 | Variable | Description |
 |----------|-------------|
 | `LISTEN_ADDR` | Listen address (default `:8080`) |
-| `ENVIRONMENTS` | JSON array of environments |
+| `CONFIG_FILE` | Path to YAML config file (see `config.yaml.example`) |
+| `ENVIRONMENTS` | JSON array of environments (legacy format) |
 
 ### Agent environment variables
 
@@ -199,7 +200,7 @@ The server handles `SIGINT` and `SIGTERM` signals gracefully. On shutdown it sto
 
 ```
 ├── cmd/
-│   ├── server/main.go          # Server entry point
+│   ├── server/main.go          # Server entry point (graceful shutdown)
 │   └── agent/main.go           # Agent entry point
 ├── internal/
 │   ├── models/models.go        # Cluster, Environment, Container types + tunnel protocol
@@ -211,7 +212,10 @@ The server handles `SIGINT` and `SIGTERM` signals gracefully. On shutdown it sto
 │   │   ├── docker.go           # Docker Swarm provider
 │   │   ├── kube.go             # Kubernetes provider
 │   │   └── nomad.go            # Nomad provider
-│   └── api/handlers.go         # HTTP/WS handlers + router
+│   ├── api/handlers.go         # HTTP/WS handlers + router
+│   ├── auth/auth.go            # JWT authentication + RBAC
+│   ├── config/config.go        # YAML configuration loading
+│   └── discovery/discovery.go  # Auto-discovery of environments
 ├── ui/
 │   ├── index.html              # Three tabs: Containers, Environments, Clusters
 │   ├── style.css               # Dark theme
@@ -219,6 +223,7 @@ The server handles `SIGINT` and `SIGTERM` signals gracefully. On shutdown it sto
 ├── Dockerfile                  # Server container image
 ├── Dockerfile.agent            # Agent container image
 ├── docker-compose.yml
-├── environments.json.example
+├── config.yaml.example         # Full YAML config with auth and groups
+├── environments.json.example   # Legacy JSON config
 └── AGENTS.md                   # Guide for AI agent contributors
 ```
