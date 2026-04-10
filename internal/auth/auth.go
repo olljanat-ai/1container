@@ -199,7 +199,10 @@ func (m *Manager) createToken(username string, admin bool) (string, error) {
 		"exp":   time.Now().Add(24 * time.Hour).Unix(),
 		"iat":   time.Now().Unix(),
 	}
-	claimsJSON, _ := json.Marshal(claims)
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("marshal token claims: %w", err)
+	}
 	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
 
 	message := header + "." + payload
