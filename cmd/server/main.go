@@ -43,7 +43,6 @@ func main() {
 	} else {
 		// Default config with a single admin user (password: admin)
 		cfg = &config.Config{
-			JWTSecret: "change-me-in-production",
 			Users: []config.UserConfig{
 				{
 					Username: "admin",
@@ -52,6 +51,9 @@ func main() {
 				},
 			},
 		}
+		// Generate a random JWT secret since no config file is provided
+		cfg.JWTSecret = config.GenerateRandomSecret()
+		log.Printf("WARNING: No config file provided, using auto-generated JWT secret. Tokens will not survive restarts.")
 	}
 
 	authMgr := auth.NewManager(cfg)

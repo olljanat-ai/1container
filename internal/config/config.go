@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 
@@ -60,7 +62,16 @@ func Load(path string) (*Config, error) {
 		cfg.ListenAddr = ":8080"
 	}
 	if cfg.JWTSecret == "" {
-		cfg.JWTSecret = "change-me-in-production"
+		cfg.JWTSecret = GenerateRandomSecret()
 	}
 	return &cfg, nil
+}
+
+// GenerateRandomSecret returns a cryptographically random hex-encoded secret.
+func GenerateRandomSecret() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "fallback-" + fmt.Sprintf("%d", os.Getpid())
+	}
+	return hex.EncodeToString(b)
 }
