@@ -11,19 +11,11 @@ import (
 
 // Config is the top-level configuration loaded from config.yaml.
 type Config struct {
-	ListenAddr string            `yaml:"listen_addr"`
-	JWTSecret  string            `yaml:"jwt_secret"`
-	Clusters   []ClusterConfig   `yaml:"clusters"`
-	Users      []UserConfig      `yaml:"users"`
-	Groups     []GroupConfig     `yaml:"groups"`
+	ListenAddr   string              `yaml:"listen_addr"`
+	JWTSecret    string              `yaml:"jwt_secret"`
+	Users        []UserConfig        `yaml:"users"`
+	Groups       []GroupConfig       `yaml:"groups"`
 	Environments []EnvironmentConfig `yaml:"environments"`
-}
-
-// ClusterConfig defines a cluster the server connects to via agents.
-type ClusterConfig struct {
-	ID   string `yaml:"id"`
-	Name string `yaml:"name"`
-	Type string `yaml:"type"` // kubernetes, nomad, docker-swarm
 }
 
 // UserConfig defines a user with hashed password and group memberships.
