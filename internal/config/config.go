@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,6 +57,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = GenerateRandomSecret()
+		log.Printf("WARNING: No jwt_secret configured, using auto-generated secret. Tokens will not survive restarts.")
+	} else if strings.Contains(cfg.JWTSecret, "change-me") {
+		log.Printf("WARNING: jwt_secret appears to be a placeholder. Set a strong random secret for production use.")
 	}
 	return &cfg, nil
 }
