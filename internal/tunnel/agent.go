@@ -226,7 +226,8 @@ func (a *AgentClient) doHTTP(req *models.TunnelRequest) *models.TunnelResponse {
 		return &models.TunnelResponse{ID: req.ID, Error: err.Error()}
 	}
 	defer httpResp.Body.Close()
-	respBody, _ := io.ReadAll(httpResp.Body)
+	const maxResponseBody = 64 << 20 // 64 MB
+	respBody, _ := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBody))
 	headers := make(map[string][]string)
 	for k, v := range httpResp.Header {
 		headers[k] = v
