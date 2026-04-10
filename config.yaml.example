@@ -7,6 +7,11 @@ listen_addr: ":8080"
 # IMPORTANT: Change this to a strong random string in production.
 jwt_secret: "change-me-to-a-random-secret"
 
+# Shared secret that agents must present to connect.
+# If set, agents must pass ?secret=<value> when connecting to /ws/tunnel.
+# Leave empty to allow unauthenticated agent connections (NOT recommended for production).
+agent_secret: "change-me-to-a-random-agent-secret"
+
 # Clusters are registered automatically when agents connect.
 # You do not need to configure clusters here — they appear once an
 # agent establishes a tunnel to the server.
