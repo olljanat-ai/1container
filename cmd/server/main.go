@@ -13,6 +13,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -96,17 +98,36 @@ func main() {
 	}
 
 	// Start environment auto-discovery (every 60 seconds)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	disc := discovery.New(hub, func(env *models.Environment) {
 		srv.RegisterEnvironment(env)
 	}, func(envID string) {
 		srv.RemoveDiscoveredEnvironment(envID)
 	}, 60*time.Second)
-	go disc.Run(context.Background(), srv.GetClusters)
+	go disc.Run(ctx, srv.GetClusters)
+
+	httpSrv := &http.Server{
+		Addr:    *addr,
+		Handler: srv.Handler(),
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Printf("shutting down gracefully (10s timeout)...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown error: %v", err)
+		}
+	}()
 
 	log.Printf("container-hub server listening on %s", *addr)
-	if err := http.ListenAndServe(*addr, srv.Handler()); err != nil {
+	if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	log.Printf("server stopped")
 }
 
 func loadLegacyConfig(srv *api.Server, path string) {

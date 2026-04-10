@@ -191,6 +191,10 @@ Environments reference clusters by `cluster_id`. Clusters are auto-registered wh
 
 Only outbound connections are required from the agent — no firewall changes needed.
 
+## Graceful Shutdown
+
+The server handles `SIGINT` and `SIGTERM` signals gracefully. On shutdown it stops accepting new connections and waits up to 10 seconds for in-flight requests (including WebSocket streams) to complete before exiting.
+
 ## Project Structure
 
 ```
