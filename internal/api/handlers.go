@@ -165,6 +165,7 @@ func userFromContext(ctx context.Context) *auth.User {
 // --- Auth endpoints ---------------------------------------------------------
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -255,6 +256,7 @@ func (s *Server) listEnvironments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addEnvironment(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	user := userFromContext(r.Context())
 	if !user.Admin {
 		writeErr(w, 403, "admin access required")
@@ -467,6 +469,7 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	envID := r.PathValue("envID")
 	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/exec")
 
