@@ -44,6 +44,7 @@ internal/tunnel/hub.go      Server-side Hub. Manages agent connections keyed by 
 
 internal/tunnel/agent.go    Agent-side client. Connects via WebSocket, reads TunnelRequest messages,
                             makes HTTP calls to LocalEndpoint, returns TunnelResponse messages.
+                            Reconnects with exponential backoff (5s–60s) on failure.
                             handleStreamRequest sends chunked responses for follow/streaming.
 
 internal/provider/provider.go   Provider interface (ListContainers, InspectContainer, ContainerLogs,
@@ -63,7 +64,18 @@ internal/api/handlers.go        HTTP router and handlers. Clusters are auto-regi
                                 ClusterJoined/ClusterLeft callbacks from the Hub. Environments
                                 are CRUD via API. Containers are fetched per-environment in parallel.
                                 Includes WebSocket handlers for live log streaming (/ws/logs/)
-                                and interactive shell (/ws/shell/).
+                                and interactive shell (/ws/shell/). Health check at /healthz.
+
+internal/auth/auth.go           User authentication and authorization. HMAC-SHA256 JWT tokens,
+                                bcrypt password verification, group-based RBAC with wildcard
+                                environment pattern matching. Admin bypass for all restrictions.
+
+internal/config/config.go       YAML configuration loading. Parses users, groups, environments,
+                                JWT/agent secrets. Auto-generates JWT secret if not provided.
+
+internal/discovery/discovery.go Periodic auto-discovery of environments from connected clusters.
+                                Discovers K8s namespaces and Nomad namespaces. Docker Swarm gets
+                                one environment per cluster. Runs every 60 seconds.
 
 ui/index.html               Single-page app with three tabs: Containers, Environments, Clusters.
 ui/style.css                Dark theme styles.
@@ -72,21 +84,21 @@ ui/app.js                   Frontend logic. Fetches from /api/*, opens WebSocket
 
 ## Build & Run
 
-Requires Go 1.22+.
+Requires Go 1.25+.
 
 ```bash
 go build -o bin/container-hub       ./cmd/server/
 go build -o bin/container-hub-agent ./cmd/agent/
 ```
 
-Server: `./bin/container-hub [-config environments.json] [-addr :8080]`
+Server: `./bin/container-hub [-config config.yaml] [-addr :8080]`
 Agent:  `./bin/container-hub-agent -server ws://host:8080/ws/tunnel -cluster-id X -cluster-name Y -cluster-type Z -endpoint http://... [-token T] [-skip-tls]`
 
 All flags have environment variable equivalents (see README.md).
 
 ## How to Add a New Orchestrator
 
-1. Define a new `ClusterType` constant in `internal/models/models.go`.
+1. Define a new `ClusterType` constant in `internal/models/models.go` and add it to `ValidClusterType()`.
 2. Create `internal/provider/<name>.go` implementing the `Provider` interface.
 3. Add a case to the `New()` factory in `internal/provider/provider.go`.
 4. The agent already supports arbitrary cluster types — it just proxies HTTP. If the new orchestrator uses a different auth header, add a case to `authHeader()` in `internal/tunnel/agent.go`.
@@ -100,7 +112,7 @@ All flags have environment variable equivalents (see README.md).
 
 ## Testing
 
-There are no automated tests yet. The PR workflow (`.github/workflows/pr.yml`) runs `go build`, `go vet`, and `go test ./...`. When adding tests, place them next to the code they test (`*_test.go` files).
+The PR workflow (`.github/workflows/pr.yml`) runs `go build`, `go vet`, and `go test -race ./...`. Unit tests exist for all internal packages: `api`, `auth`, `config`, `discovery`, `models`, `provider`, and `tunnel`. When adding tests, place them next to the code they test (`*_test.go` files).
 
 ## Common Patterns
 

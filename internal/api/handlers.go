@@ -7,11 +7,13 @@ import (
 	"container-hub/internal/tunnel"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +55,7 @@ func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string) *Serv
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/auth/check", s.authCheck)
+	mux.HandleFunc("GET /healthz", s.healthCheck)
 
 	// Clusters (read-only, auto-registered by agents)
 	mux.HandleFunc("GET /api/clusters", s.requireAuth(s.listClusters))
@@ -148,7 +151,7 @@ func (s *Server) requireAgentAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.agentSecret != "" {
 			token := r.URL.Query().Get("secret")
-			if token != s.agentSecret {
+			if subtle.ConstantTimeCompare([]byte(token), []byte(s.agentSecret)) != 1 {
 				http.Error(w, "unauthorized: invalid agent secret", 401)
 				return
 			}
@@ -215,6 +218,28 @@ func (s *Server) authCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]interface{}{
 		"username": user.Username,
 		"admin":    user.Admin,
+	})
+}
+
+// --- Health check -----------------------------------------------------------
+
+func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	totalClusters := len(s.clusters)
+	onlineClusters := 0
+	for _, c := range s.clusters {
+		if s.hub.IsOnline(c.ID) {
+			onlineClusters++
+		}
+	}
+	totalEnvs := len(s.envs)
+	s.mu.RUnlock()
+
+	writeJSON(w, 200, map[string]interface{}{
+		"status":           "ok",
+		"clusters_total":   totalClusters,
+		"clusters_online":  onlineClusters,
+		"environments":     totalEnvs,
 	})
 }
 
@@ -363,7 +388,7 @@ func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 		}(env)
 	}
 
-	var all []models.Container
+	all := make([]models.Container, 0)
 	var errors []string
 	for range envsCopy {
 		res := <-ch
@@ -430,10 +455,7 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
 	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/logs")
 
-	tail := 200
-	if t := r.URL.Query().Get("tail"); t != "" {
-		fmt.Sscanf(t, "%d", &tail)
-	}
+	tail := parseTail(r.URL.Query().Get("tail"), 200)
 
 	env := s.getEnv(envID)
 	if env == nil {
@@ -531,10 +553,7 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
 	containerID := r.PathValue("containerID")
 
-	tail := 100
-	if t := r.URL.Query().Get("tail"); t != "" {
-		fmt.Sscanf(t, "%d", &tail)
-	}
+	tail := parseTail(r.URL.Query().Get("tail"), 100)
 
 	env := s.getEnv(envID)
 	if env == nil {
@@ -695,6 +714,11 @@ func (s *Server) providerFor(env *models.Environment) provider.Provider {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Security headers
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+
+		// CORS
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -718,6 +742,21 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// parseTail parses a tail line count from a query parameter, clamping to [1, 10000].
+func parseTail(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return defaultVal
+	}
+	if n > 10000 {
+		return 10000
+	}
+	return n
 }
 
 func shortID() string {

@@ -94,7 +94,7 @@ func (k *KubeProvider) ListContainers(ctx context.Context) ([]models.Container, 
 		return nil, err
 	}
 
-	var out []models.Container
+	out := make([]models.Container, 0, len(pl.Items))
 	for _, pod := range pl.Items {
 		state := strings.ToLower(string(pod.Status.Phase))
 		status := string(pod.Status.Phase)

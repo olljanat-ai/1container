@@ -9,6 +9,16 @@ const (
 	ClusterNomad       ClusterType = "nomad"
 )
 
+// ValidClusterType reports whether ct is a supported cluster type.
+func ValidClusterType(ct ClusterType) bool {
+	switch ct {
+	case ClusterDockerSwarm, ClusterKubernetes, ClusterNomad:
+		return true
+	default:
+		return false
+	}
+}
+
 // Cluster represents a container platform connected via an agent.
 type Cluster struct {
 	ID     string      `json:"id"`

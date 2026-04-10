@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   hub:
     build: .
@@ -7,8 +5,12 @@ services:
       - "8080:8080"
     environment:
       - LISTEN_ADDR=:8080
-      # Pre-register environments via env var (optional):
+      # Use a YAML config file (optional):
+      # - CONFIG_FILE=/app/config.yaml
+      # Or pre-register environments via env var (legacy):
       # - ENVIRONMENTS=[{"id":"prod-default","name":"Production","cluster_id":"k8s-prod","namespace":"default"}]
+    # volumes:
+    #   - ./config.yaml:/app/config.yaml:ro
 
   # Example agent for a Docker Swarm cluster behind a firewall.
   # Deploy this in the target network:
