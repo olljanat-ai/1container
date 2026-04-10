@@ -52,13 +52,26 @@ func NewAgentClient(cfg AgentConfig) *AgentClient {
 	}
 }
 
-// Run connects to the server and processes requests. Reconnects on failure.
+// Run connects to the server and processes requests. Reconnects on failure
+// with exponential backoff (5s, 10s, 20s, 40s, capped at 60s).
 func (a *AgentClient) Run() {
+	backoff := 5 * time.Second
+	const maxBackoff = 60 * time.Second
 	for {
-		if err := a.connect(); err != nil {
-			log.Printf("connection error: %v – retrying in 5s", err)
+		err := a.connect()
+		if err != nil {
+			log.Printf("connection error: %v – retrying in %s", err, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		} else {
+			// Successful connection that later disconnected; reset backoff
+			backoff = 5 * time.Second
+			log.Printf("disconnected from hub – reconnecting in %s", backoff)
+			time.Sleep(backoff)
 		}
-		time.Sleep(5 * time.Second)
 	}
 }
 

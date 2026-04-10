@@ -44,6 +44,7 @@ internal/tunnel/hub.go      Server-side Hub. Manages agent connections keyed by 
 
 internal/tunnel/agent.go    Agent-side client. Connects via WebSocket, reads TunnelRequest messages,
                             makes HTTP calls to LocalEndpoint, returns TunnelResponse messages.
+                            Reconnects with exponential backoff (5s–60s) on failure.
                             handleStreamRequest sends chunked responses for follow/streaming.
 
 internal/provider/provider.go   Provider interface (ListContainers, InspectContainer, ContainerLogs,
