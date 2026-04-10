@@ -85,7 +85,7 @@ func (n *NomadProvider) ListContainers(ctx context.Context) ([]models.Container,
 		return nil, err
 	}
 
-	var out []models.Container
+	out := make([]models.Container, 0)
 	for _, a := range allocs {
 		for taskName, ts := range a.TaskStates {
 			status := a.ClientDescription

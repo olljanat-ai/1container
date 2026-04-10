@@ -364,7 +364,7 @@ func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 		}(env)
 	}
 
-	var all []models.Container
+	all := make([]models.Container, 0)
 	var errors []string
 	for range envsCopy {
 		res := <-ch
