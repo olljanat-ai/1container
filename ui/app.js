@@ -9,8 +9,145 @@ let logStreamWS = null;
 let shellWS = null;
 let shellHistory = [];
 let shellHistoryIdx = -1;
+let authToken = null;
+let currentUser = null;
+let refreshInterval = null;
 
-// --- Tabs ---
+// ============================================================
+// Theme
+// ============================================================
+function initTheme() {
+  const saved = localStorage.getItem('theme');
+  const theme = saved || 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  updateThemeIcon(theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateThemeIcon(next);
+}
+
+function updateThemeIcon(theme) {
+  const btn = document.getElementById('theme-toggle');
+  if (btn) {
+    // Sun icon for dark mode (click to switch to light), moon for light mode
+    btn.innerHTML = theme === 'dark' ? '&#9788;' : '&#9789;';
+    btn.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+  }
+}
+
+initTheme();
+
+// ============================================================
+// Auth
+// ============================================================
+function getAuthHeaders() {
+  const headers = {'Content-Type': 'application/json'};
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  return headers;
+}
+
+function authFetch(url, options = {}) {
+  options.headers = {...getAuthHeaders(), ...(options.headers || {})};
+  options.credentials = 'same-origin';
+  return fetch(url, options).then(resp => {
+    if (resp.status === 401) {
+      handleLogout();
+      throw new Error('Session expired');
+    }
+    return resp;
+  });
+}
+
+function wsUrl(path) {
+  const token = authToken || '';
+  const sep = path.includes('?') ? '&' : '?';
+  return WS_BASE + path + sep + 'token=' + encodeURIComponent(token);
+}
+
+async function checkAuth() {
+  try {
+    const resp = await fetch(`${API}/api/auth/check`, {
+      headers: getAuthHeaders(),
+      credentials: 'same-origin',
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      currentUser = data;
+      showApp();
+      return true;
+    }
+  } catch {}
+  showLogin();
+  return false;
+}
+
+function showLogin() {
+  document.getElementById('login-page').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
+}
+
+function showApp() {
+  document.getElementById('login-page').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  const userInfo = document.getElementById('user-info');
+  if (currentUser) {
+    userInfo.textContent = currentUser.username + (currentUser.admin ? ' (admin)' : '');
+  }
+  initApp();
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+
+  try {
+    const resp = await fetch(`${API}/api/login`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({username, password}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      errEl.textContent = data.error || 'Login failed';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    authToken = data.token;
+    currentUser = {username: data.username, admin: false};
+    // Re-check to get full user info
+    await checkAuth();
+  } catch (err) {
+    errEl.textContent = 'Connection error';
+    errEl.classList.remove('hidden');
+  }
+}
+
+function handleLogout() {
+  fetch(`${API}/api/logout`, {method: 'POST', credentials: 'same-origin'}).catch(() => {});
+  authToken = null;
+  currentUser = null;
+  closeLogStream();
+  closeShell();
+  showLogin();
+}
+
+document.getElementById('login-form').addEventListener('submit', handleLogin);
+document.getElementById('logout-btn').addEventListener('click', handleLogout);
+document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+// ============================================================
+// Tabs
+// ============================================================
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
@@ -41,7 +178,7 @@ async function loadContainers() {
   const envFilter = document.getElementById('env-filter').value;
   const url = envFilter ? `${API}/api/containers?env=${envFilter}` : `${API}/api/containers`;
   try {
-    const resp = await fetch(url);
+    const resp = await authFetch(url);
     const data = await resp.json();
     allContainers = data.containers || [];
     const bar = document.getElementById('errors-bar');
@@ -96,7 +233,7 @@ function renderContainers() {
 // ============================================================
 async function loadEnvironments() {
   try {
-    const resp = await fetch(`${API}/api/environments`);
+    const resp = await authFetch(`${API}/api/environments`);
     environments = await resp.json();
     renderEnvironments();
     populateEnvFilter();
@@ -106,7 +243,7 @@ async function loadEnvironments() {
 function renderEnvironments() {
   const grid = document.getElementById('env-list');
   if (environments.length === 0) {
-    grid.innerHTML = '<div class="empty">No environments configured. Add one to get started.</div>';
+    grid.innerHTML = '<div class="empty">No environments available for your account.</div>';
     return;
   }
   grid.innerHTML = environments.map((e, i) => `
@@ -115,7 +252,7 @@ function renderEnvironments() {
       <div class="meta">Cluster: ${esc(e.cluster_name || e.cluster_id)} <span class="env-type">${esc(e.cluster_type)}</span></div>
       <div class="meta">Namespace: ${esc(e.namespace || '(none)')}</div>
       <div class="meta">Agent: ${e.online ? 'Connected' : 'Offline'}</div>
-      <div class="env-actions"><button class="btn btn-sm" data-env-idx="${i}">Remove</button></div>
+      ${currentUser && currentUser.admin ? `<div class="env-actions"><button class="btn btn-sm" data-env-idx="${i}">Remove</button></div>` : ''}
     </div>`).join('');
   grid.querySelectorAll('button[data-env-idx]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -137,7 +274,7 @@ function populateEnvFilter() {
 // ============================================================
 async function loadClusters() {
   try {
-    const resp = await fetch(`${API}/api/clusters`);
+    const resp = await authFetch(`${API}/api/clusters`);
     clusters = await resp.json();
     renderClusters();
   } catch (e) { console.error('load clusters:', e); }
@@ -162,6 +299,10 @@ function renderClusters() {
 // Add / Remove Environment
 // ============================================================
 document.getElementById('add-env-btn').addEventListener('click', async () => {
+  if (!currentUser || !currentUser.admin) {
+    alert('Admin access required to add environments');
+    return;
+  }
   await loadClusters();
   const sel = document.getElementById('env-cluster');
   sel.innerHTML = clusters.map(c => `<option value="${esc(c.id)}" data-type="${esc(c.type)}">${esc(c.name)} (${esc(c.type)})</option>`).join('');
@@ -190,8 +331,8 @@ document.getElementById('env-save').addEventListener('click', async () => {
   };
   if (!env.name || !env.cluster_id) return alert('Name and cluster are required');
   try {
-    const resp = await fetch(`${API}/api/environments`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(env),
+    const resp = await authFetch(`${API}/api/environments`, {
+      method: 'POST', body: JSON.stringify(env),
     });
     if (!resp.ok) { const e = await resp.json(); alert(e.error); return; }
     document.getElementById('add-env-form').classList.add('hidden');
@@ -203,7 +344,7 @@ document.getElementById('env-save').addEventListener('click', async () => {
 
 async function removeEnv(id) {
   if (!confirm('Remove this environment?')) return;
-  await fetch(`${API}/api/environments/${id}`, {method: 'DELETE'});
+  await authFetch(`${API}/api/environments/${id}`, {method: 'DELETE'});
   loadEnvironments();
 }
 
@@ -239,7 +380,7 @@ async function fetchInspect() {
   out.textContent = 'Loading…';
   try {
     const {envID, containerID} = currentContainer;
-    const resp = await fetch(`${API}/api/containers/${envID}/${containerID}`);
+    const resp = await authFetch(`${API}/api/containers/${envID}/${containerID}`);
     out.textContent = JSON.stringify(await resp.json(), null, 2);
   } catch (e) { out.textContent = 'Error: ' + e.message; }
 }
@@ -254,7 +395,7 @@ async function fetchLogs() {
   out.textContent = 'Loading…';
   try {
     const {envID, containerID} = currentContainer;
-    const resp = await fetch(`${API}/api/containers/${envID}/${containerID}/logs?tail=${tail}`);
+    const resp = await authFetch(`${API}/api/containers/${envID}/${containerID}/logs?tail=${tail}`);
     out.textContent = await resp.text();
     out.scrollTop = out.scrollHeight;
   } catch (e) { out.textContent = 'Error: ' + e.message; }
@@ -267,7 +408,7 @@ function startLogStream() {
   const {envID, containerID} = currentContainer;
   const tail = document.getElementById('log-tail').value || 100;
   const out = document.getElementById('log-output');
-  logStreamWS = new WebSocket(`${WS_BASE}/ws/logs/${envID}/${containerID}?tail=${tail}`);
+  logStreamWS = new WebSocket(wsUrl(`/ws/logs/${envID}/${containerID}?tail=${tail}`));
   logStreamWS.onopen = () => { updateStreamUI(true); out.textContent = ''; };
   logStreamWS.onmessage = (evt) => { out.textContent += evt.data; out.scrollTop = out.scrollHeight; };
   logStreamWS.onclose = () => { updateStreamUI(false); logStreamWS = null; };
@@ -301,7 +442,7 @@ function initShell() {
   const termInput = document.getElementById('term-input');
   termOutput.innerHTML = ''; shellHistory = []; shellHistoryIdx = -1;
   const {envID, containerID} = currentContainer;
-  shellWS = new WebSocket(`${WS_BASE}/ws/shell/${envID}/${containerID}`);
+  shellWS = new WebSocket(wsUrl(`/ws/shell/${envID}/${containerID}`));
   shellWS.onopen = () => termInput.focus();
   shellWS.onmessage = (evt) => {
     try { const d = JSON.parse(evt.data); appendTermOutput(d.output, d.exit_code); }
@@ -364,9 +505,13 @@ function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.
 // ============================================================
 // Init
 // ============================================================
-(async () => {
+async function initApp() {
   await loadEnvironments();
   await loadClusters();
   loadContainers();
-  setInterval(loadContainers, 30000);
-})();
+  if (refreshInterval) clearInterval(refreshInterval);
+  refreshInterval = setInterval(loadContainers, 30000);
+}
+
+// Check auth on page load
+checkAuth();
