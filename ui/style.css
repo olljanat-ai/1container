@@ -19,6 +19,8 @@
   --tr-hover: rgba(59,130,246,0.05);
   --modal-overlay: rgba(0,0,0,0.6);
   --login-bg: #0f1117;
+  --error-bg: #3b1a1a;
+  --error-text: #fca5a5;
 }
 
 /* Light theme */
@@ -39,6 +41,8 @@
   --tr-hover: rgba(59,130,246,0.06);
   --modal-overlay: rgba(0,0,0,0.3);
   --login-bg: #e8eaf0;
+  --error-bg: #fef2f2;
+  --error-text: #991b1b;
 }
 
 body {
@@ -144,8 +148,8 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus { border-co
 .stream-badge.off { background: rgba(139,141,151,0.15); color: var(--muted); }
 
 .errors-bar {
-  background: #3b1a1a; border: 1px solid var(--red); border-radius: var(--radius);
-  padding: 10px 14px; margin-bottom: 12px; font-size: 12px; color: #fca5a5;
+  background: var(--error-bg); border: 1px solid var(--red); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 12px; font-size: 12px; color: var(--error-text);
 }
 
 table { width: 100%; border-collapse: collapse; }
