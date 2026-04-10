@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -454,10 +455,7 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
 	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/logs")
 
-	tail := 200
-	if t := r.URL.Query().Get("tail"); t != "" {
-		fmt.Sscanf(t, "%d", &tail)
-	}
+	tail := parseTail(r.URL.Query().Get("tail"), 200)
 
 	env := s.getEnv(envID)
 	if env == nil {
@@ -555,10 +553,7 @@ func (s *Server) wsLogs(w http.ResponseWriter, r *http.Request) {
 	envID := r.PathValue("envID")
 	containerID := r.PathValue("containerID")
 
-	tail := 100
-	if t := r.URL.Query().Get("tail"); t != "" {
-		fmt.Sscanf(t, "%d", &tail)
-	}
+	tail := parseTail(r.URL.Query().Get("tail"), 100)
 
 	env := s.getEnv(envID)
 	if env == nil {
@@ -742,6 +737,21 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// parseTail parses a tail line count from a query parameter, clamping to [1, 10000].
+func parseTail(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return defaultVal
+	}
+	if n > 10000 {
+		return 10000
+	}
+	return n
 }
 
 func shortID() string {

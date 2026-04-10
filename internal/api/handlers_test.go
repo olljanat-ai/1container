@@ -166,6 +166,30 @@ func TestWriteErr(t *testing.T) {
 	}
 }
 
+func TestParseTail(t *testing.T) {
+	tests := []struct {
+		input      string
+		defaultVal int
+		want       int
+	}{
+		{"", 200, 200},
+		{"100", 200, 100},
+		{"0", 200, 200},
+		{"-5", 200, 200},
+		{"abc", 200, 200},
+		{"10000", 200, 10000},
+		{"99999", 200, 10000},   // clamped to max
+		{"1", 100, 1},
+		{"500", 100, 500},
+	}
+	for _, tt := range tests {
+		got := parseTail(tt.input, tt.defaultVal)
+		if got != tt.want {
+			t.Errorf("parseTail(%q, %d) = %d, want %d", tt.input, tt.defaultVal, got, tt.want)
+		}
+	}
+}
+
 func TestHealthCheck(t *testing.T) {
 	s := newTestServer()
 	req := httptest.NewRequest("GET", "/healthz", nil)
