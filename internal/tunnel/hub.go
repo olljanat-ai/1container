@@ -267,7 +267,10 @@ func (t *tunnelTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("no tunnel for cluster %s", t.clusterID)
 	}
 
-	body, _ := io.ReadAll(req.Body)
+	var body []byte
+	if req.Body != nil {
+		body, _ = io.ReadAll(req.Body)
+	}
 	urlPath := req.URL.Path
 	if req.URL.RawQuery != "" {
 		urlPath += "?" + req.URL.RawQuery
