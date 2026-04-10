@@ -136,6 +136,14 @@ func TestCorsMiddleware(t *testing.T) {
 	if got := w2.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Errorf("credentials = %q, want %q", got, "true")
 	}
+
+	// Test security headers are present
+	if got := w2.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+	}
+	if got := w2.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want %q", got, "DENY")
+	}
 }
 
 func TestWriteJSON(t *testing.T) {
