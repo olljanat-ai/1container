@@ -166,6 +166,24 @@ func TestWriteErr(t *testing.T) {
 	}
 }
 
+func TestHealthCheck(t *testing.T) {
+	s := newTestServer()
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !contains(body, `"status":"ok"`) {
+		t.Errorf("body = %q, want to contain status ok", body)
+	}
+	if !contains(body, `"clusters_total"`) {
+		t.Errorf("body = %q, want to contain clusters_total", body)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsImpl(s, substr))
 }

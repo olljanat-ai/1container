@@ -116,6 +116,7 @@ docker run \
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/healthz` | Health check (no auth required) |
 | `GET` | `/api/clusters` | List registered clusters (auto-populated by agents) |
 | `GET` | `/api/environments` | List configured environments |
 | `POST` | `/api/environments` | Create an environment |

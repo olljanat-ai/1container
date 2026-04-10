@@ -54,6 +54,7 @@ func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string) *Serv
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/auth/check", s.authCheck)
+	mux.HandleFunc("GET /healthz", s.healthCheck)
 
 	// Clusters (read-only, auto-registered by agents)
 	mux.HandleFunc("GET /api/clusters", s.requireAuth(s.listClusters))
@@ -216,6 +217,28 @@ func (s *Server) authCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]interface{}{
 		"username": user.Username,
 		"admin":    user.Admin,
+	})
+}
+
+// --- Health check -----------------------------------------------------------
+
+func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	totalClusters := len(s.clusters)
+	onlineClusters := 0
+	for _, c := range s.clusters {
+		if s.hub.IsOnline(c.ID) {
+			onlineClusters++
+		}
+	}
+	totalEnvs := len(s.envs)
+	s.mu.RUnlock()
+
+	writeJSON(w, 200, map[string]interface{}{
+		"status":           "ok",
+		"clusters_total":   totalClusters,
+		"clusters_online":  onlineClusters,
+		"environments":     totalEnvs,
 	})
 }
 
