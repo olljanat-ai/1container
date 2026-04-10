@@ -100,7 +100,7 @@ All flags have environment variable equivalents (see README.md).
 
 ## Testing
 
-There are no automated tests yet. The PR workflow (`.github/workflows/pr.yml`) runs `go build`, `go vet`, and `go test ./...`. When adding tests, place them next to the code they test (`*_test.go` files).
+The PR workflow (`.github/workflows/pr.yml`) runs `go build`, `go vet`, and `go test -race ./...`. Unit tests exist for the `config`, `auth`, and `provider` packages. When adding tests, place them next to the code they test (`*_test.go` files).
 
 ## Common Patterns
 

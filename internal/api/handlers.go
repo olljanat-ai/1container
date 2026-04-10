@@ -7,6 +7,7 @@ import (
 	"container-hub/internal/tunnel"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -148,7 +149,7 @@ func (s *Server) requireAgentAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.agentSecret != "" {
 			token := r.URL.Query().Get("secret")
-			if token != s.agentSecret {
+			if subtle.ConstantTimeCompare([]byte(token), []byte(s.agentSecret)) != 1 {
 				http.Error(w, "unauthorized: invalid agent secret", 401)
 				return
 			}
