@@ -72,7 +72,7 @@ ui/app.js                   Frontend logic. Fetches from /api/*, opens WebSocket
 
 ## Build & Run
 
-Requires Go 1.22+.
+Requires Go 1.25+.
 
 ```bash
 go build -o bin/container-hub       ./cmd/server/
