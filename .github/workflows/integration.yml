@@ -29,7 +29,69 @@ jobs:
         with:
           go-version: "1.25"
 
+      - uses: hashicorp/setup-nomad@main
+
+      - name: Start Nomad dev agent
+        run: |
+          nomad agent -dev -bind=0.0.0.0 &
+          # Wait for leader election
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4646/v1/status/leader | grep -q ':'; then
+              echo "Nomad leader elected"
+              break
+            fi
+            sleep 2
+          done
+          # Wait for client node to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4646/v1/nodes | jq -e '.[0].Status == "ready"' > /dev/null 2>&1; then
+              echo "Nomad client node ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Submit Nomad test job
+        run: |
+          curl -sf -X POST http://127.0.0.1:4646/v1/jobs \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "Job": {
+                "ID": "integration-test",
+                "Name": "integration-test",
+                "Type": "service",
+                "Datacenters": ["dc1"],
+                "TaskGroups": [{
+                  "Name": "test",
+                  "Count": 1,
+                  "Tasks": [{
+                    "Name": "main",
+                    "Driver": "raw_exec",
+                    "Config": {
+                      "command": "/bin/sh",
+                      "args": ["-c", "echo hello-integration && sleep 3600"]
+                    },
+                    "Resources": {
+                      "CPU": 100,
+                      "MemoryMB": 64
+                    }
+                  }]
+                }]
+              }
+            }'
+          # Wait for allocation to be running
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4646/v1/job/integration-test/allocations | jq -e '.[] | select(.ClientStatus == "running")' > /dev/null 2>&1; then
+              echo "Nomad allocation running"
+              break
+            fi
+            sleep 2
+          done
+          sleep 3
+
       - name: Run Nomad integration tests
+        env:
+          NOMAD_INTEGRATION_ENDPOINT: http://127.0.0.1:4646
         run: go test -tags integration -v -timeout 8m -run TestNomadProvider ./tests/integration/
 
   kubernetes:
@@ -43,5 +105,53 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Install K3s
+        uses: AbsaOSS/k3d-action@v2
+        with:
+          cluster-name: integration
+          args: --no-lb --k3s-arg --disable=traefik@server:0 --k3s-arg --disable=metrics-server@server:0
+
+      - name: Setup test resources
+        run: |
+          # Wait for node to be ready
+          kubectl wait --for=condition=Ready node --all --timeout=120s
+
+          # Wait for default service account to be created by the controller
+          for i in $(seq 1 30); do
+            if kubectl get serviceaccount default -n default > /dev/null 2>&1; then
+              echo "Default service account ready"
+              break
+            fi
+            sleep 2
+          done
+
+          # Create service account with cluster-admin privileges
+          kubectl create serviceaccount integration-test -n default
+          kubectl create clusterrolebinding integration-test \
+            --clusterrole=cluster-admin \
+            --serviceaccount=default:integration-test
+
+          # Generate bearer token
+          K8S_TOKEN=$(kubectl create token integration-test -n default --duration=1h)
+          echo "K8S_TOKEN=$K8S_TOKEN" >> "$GITHUB_ENV"
+
+          # Get the API server endpoint
+          K8S_ENDPOINT=$(kubectl config view -o jsonpath='{.clusters[0].cluster.server}')
+          echo "K8S_ENDPOINT=$K8S_ENDPOINT" >> "$GITHUB_ENV"
+
+          # Deploy test pod
+          kubectl run integration-test \
+            --image=busybox:stable \
+            --restart=Never \
+            --labels=app=integration-test \
+            --command -- sh -c "echo hello-integration && sleep 3600"
+
+          # Wait for pod to be ready
+          kubectl wait --for=condition=Ready pod/integration-test -n default --timeout=120s
+          sleep 3
+
       - name: Run Kubernetes integration tests
+        env:
+          K8S_INTEGRATION_ENDPOINT: ${{ env.K8S_ENDPOINT }}
+          K8S_INTEGRATION_TOKEN: ${{ env.K8S_TOKEN }}
         run: go test -tags integration -v -timeout 12m -run TestKubernetesProvider ./tests/integration/

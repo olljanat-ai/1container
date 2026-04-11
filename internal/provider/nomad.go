@@ -93,7 +93,7 @@ func (n *NomadProvider) ListContainers(ctx context.Context) ([]models.Container,
 				status = a.ClientStatus
 			}
 			out = append(out, models.Container{
-				ID:          truncateID(a.ID, 8) + "/" + taskName,
+				ID:          a.ID + "/" + taskName,
 				Name:        a.JobID + "." + a.TaskGroup + "." + taskName,
 				Status:      status,
 				State:       ts.State,
@@ -168,35 +168,26 @@ func (n *NomadProvider) InspectContainer(ctx context.Context, id string) (*model
 
 func (n *NomadProvider) ContainerLogs(ctx context.Context, id string, tail int, follow bool) (io.ReadCloser, error) {
 	allocID, taskName := parseNomadID(id)
-	path := fmt.Sprintf("/v1/client/fs/logs/%s?task=%s&type=stderr&origin=end&offset=50000&plain=true",
-		allocID, taskName)
-	path += n.nsParam("&")
-	if follow {
-		path += "&follow=true"
-	}
-	resp, err := n.do(ctx, "GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != 200 {
-		resp.Body.Close()
-		// Fallback to stdout
-		path = fmt.Sprintf("/v1/client/fs/logs/%s?task=%s&type=stdout&origin=end&offset=50000&plain=true",
-			allocID, taskName)
+
+	// Try stdout first (most output goes here), fall back to stderr.
+	for _, logType := range []string{"stdout", "stderr"} {
+		path := fmt.Sprintf("/v1/client/fs/logs/%s?task=%s&type=%s&origin=end&offset=50000&plain=true",
+			allocID, taskName, logType)
 		path += n.nsParam("&")
 		if follow {
 			path += "&follow=true"
 		}
-		resp, err = n.do(ctx, "GET", path, nil)
+		resp, err := n.do(ctx, "GET", path, nil)
 		if err != nil {
 			return nil, err
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("nomad logs: %s", resp.Status)
+			continue
 		}
+		return resp.Body, nil
 	}
-	return resp.Body, nil
+	return nil, fmt.Errorf("nomad logs: no output available")
 }
 
 func (n *NomadProvider) ExecContainer(ctx context.Context, id string, cmd []string) (*models.ExecResponse, error) {
