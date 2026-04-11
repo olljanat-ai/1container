@@ -33,7 +33,7 @@ jobs:
 
       - name: Start Nomad dev agent
         run: |
-          sudo nomad agent -dev-connect -bind=0.0.0.0 &
+          nomad agent -dev -bind=0.0.0.0 &
           # Wait for leader election
           for i in $(seq 1 30); do
             if curl -sf http://127.0.0.1:4646/v1/status/leader | grep -q ':'; then
