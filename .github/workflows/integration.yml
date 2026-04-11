@@ -1,0 +1,47 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  docker:
+    name: Docker (DinD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Run Docker integration tests
+        run: go test -tags integration -v -timeout 8m -run TestDockerProvider ./tests/integration/
+
+  nomad:
+    name: Nomad
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Run Nomad integration tests
+        run: go test -tags integration -v -timeout 8m -run TestNomadProvider ./tests/integration/
+
+  kubernetes:
+    name: Kubernetes (K3s)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Run Kubernetes integration tests
+        run: go test -tags integration -v -timeout 12m -run TestKubernetesProvider ./tests/integration/
