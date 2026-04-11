@@ -77,9 +77,14 @@ func skipIfNoDocker(t *testing.T) {
 func dockerRun(t *testing.T, args ...string) string {
 	t.Helper()
 	cmdArgs := append([]string{"run", "-d"}, args...)
-	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	cmd := exec.Command("docker", cmdArgs...)
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("docker run %v: %v\n%s", args, err, out)
+		stderr := ""
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = string(ee.Stderr)
+		}
+		t.Fatalf("docker run %v: %v\n%s", args, err, stderr)
 	}
 	id := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
