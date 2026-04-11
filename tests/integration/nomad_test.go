@@ -129,8 +129,7 @@ func TestNomadProvider(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read logs: %v", err)
 		}
-		// The echo output should appear in stdout (provider falls back from
-		// stderr to stdout automatically).
+		// The echo output should appear in stdout (provider tries stdout first).
 		if !strings.Contains(string(data), "hello-integration") {
 			t.Errorf("logs should contain 'hello-integration', got %q", string(data))
 		}
