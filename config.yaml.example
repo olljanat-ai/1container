@@ -55,6 +55,12 @@ groups:
     environments:
       - "Staging K8s/*"
 
+# Audit logging for security-sensitive operations (login, exec, etc.).
+# Entries are JSON-formatted and include actor, source IP, and event details.
+audit:
+  enabled: true
+  log_file: ""    # empty = stdout (same as app logs), or path to separate file
+
 # Manually configured environments (in addition to auto-discovered ones).
 # Auto-discovery will find Kubernetes namespaces and Nomad namespaces
 # automatically. Use this section for static overrides if needed.

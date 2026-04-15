@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container-hub/internal/audit"
 	"container-hub/internal/auth"
 	"container-hub/internal/models"
 	"container-hub/internal/provider"
@@ -38,16 +39,18 @@ type Server struct {
 	mux         *http.ServeMux
 	auth        *auth.Manager
 	agentSecret string // shared secret for agent tunnel authentication
+	audit       *audit.Logger
 }
 
 // NewServer creates and wires the API server.
-func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string) *Server {
+func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string, auditLog *audit.Logger) *Server {
 	s := &Server{
 		clusters:    make(map[string]*models.Cluster),
 		envs:        make(map[string]*models.Environment),
 		hub:         hub,
 		auth:        authMgr,
 		agentSecret: agentSecret,
+		audit:       auditLog,
 	}
 	mux := http.NewServeMux()
 
@@ -178,11 +181,16 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid JSON")
 		return
 	}
+	srcIP := audit.SourceIP(r)
 	token, err := s.auth.Authenticate(req.Username, req.Password)
 	if err != nil {
+		s.audit.Log(audit.EventAuthLoginFailure, audit.SeverityWarn, req.Username, srcIP, map[string]interface{}{
+			"reason": "invalid credentials",
+		})
 		writeErr(w, 401, "invalid credentials")
 		return
 	}
+	s.audit.Log(audit.EventAuthLoginSuccess, audit.SeverityInfo, req.Username, srcIP, nil)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    token,
@@ -198,6 +206,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	actor := "unknown"
+	if user, err := s.auth.UserFromRequest(r); err == nil {
+		actor = user.Username
+	}
+	s.audit.Log(audit.EventAuthLogout, audit.SeverityInfo, actor, audit.SourceIP(r), nil)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
@@ -322,6 +335,12 @@ func (s *Server) addEnvironment(w http.ResponseWriter, r *http.Request) {
 	env.ClusterName = cluster.Name
 	env.ClusterType = cluster.Type
 	log.Printf("environment created: %s → cluster=%s namespace=%q", env.Name, env.ClusterID, env.Namespace)
+	s.audit.Log(audit.EventAdminEnvironmentCreate, audit.SeverityInfo, user.Username, audit.SourceIP(r), map[string]interface{}{
+		"env_id":     env.ID,
+		"env_name":   env.Name,
+		"cluster_id": env.ClusterID,
+		"namespace":  env.Namespace,
+	})
 	writeJSON(w, 201, env)
 }
 
@@ -341,6 +360,9 @@ func (s *Server) removeEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "environment not found")
 		return
 	}
+	s.audit.Log(audit.EventAdminEnvironmentDelete, audit.SeverityWarn, user.Username, audit.SourceIP(r), map[string]interface{}{
+		"env_id": id,
+	})
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
 
@@ -541,6 +563,12 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+
+	s.audit.Log(audit.EventContainerExec, audit.SeverityWarn, user.Username, audit.SourceIP(r), map[string]interface{}{
+		"env_id":       envID,
+		"container_id": containerID,
+		"command":      er.Cmd,
+	})
 
 	result, err := p.ExecContainer(ctx, containerID, er.Cmd)
 	if err != nil {
@@ -772,6 +800,11 @@ func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 		conn.WriteJSON(map[string]string{"type": "output", "output": "Error: cluster not available"})
 		return
 	}
+
+	s.audit.Log(audit.EventContainerShellOpen, audit.SeverityWarn, user.Username, audit.SourceIP(r), map[string]interface{}{
+		"env_id":       envID,
+		"container_id": containerID,
+	})
 
 	conn.WriteJSON(map[string]string{
 		"type":   "output",

@@ -1,10 +1,16 @@
 package tunnel
 
 import (
+	"container-hub/internal/audit"
 	"container-hub/internal/models"
 	"net/http"
 	"testing"
 )
+
+func testAuditLogger() *audit.Logger {
+	l, _ := audit.New(false, "")
+	return l
+}
 
 func TestNewHub(t *testing.T) {
 	joinCalled := false
@@ -12,6 +18,7 @@ func TestNewHub(t *testing.T) {
 	hub := NewHub(
 		func(id, name string, ctype models.ClusterType) { joinCalled = true },
 		func(id string) { leaveCalled = true },
+		testAuditLogger(),
 	)
 	if hub == nil {
 		t.Fatal("NewHub returned nil")
@@ -26,21 +33,21 @@ func TestNewHub(t *testing.T) {
 }
 
 func TestNewHubNilCallbacks(t *testing.T) {
-	hub := NewHub(nil, nil)
+	hub := NewHub(nil, nil, testAuditLogger())
 	if hub == nil {
-		t.Fatal("NewHub(nil, nil) returned nil")
+		t.Fatal("NewHub(nil, nil, testAuditLogger()) returned nil")
 	}
 }
 
 func TestIsOnlineNoAgents(t *testing.T) {
-	hub := NewHub(nil, nil)
+	hub := NewHub(nil, nil, testAuditLogger())
 	if hub.IsOnline("nonexistent") {
 		t.Error("IsOnline should be false for nonexistent cluster")
 	}
 }
 
 func TestTransportReturnsRoundTripper(t *testing.T) {
-	hub := NewHub(nil, nil)
+	hub := NewHub(nil, nil, testAuditLogger())
 	transport := hub.Transport("cluster-1")
 	if transport == nil {
 		t.Fatal("Transport returned nil")
@@ -48,7 +55,7 @@ func TestTransportReturnsRoundTripper(t *testing.T) {
 }
 
 func TestTransportRoundTripOfflineCluster(t *testing.T) {
-	hub := NewHub(nil, nil)
+	hub := NewHub(nil, nil, testAuditLogger())
 	transport := hub.Transport("offline-cluster")
 
 	// RoundTrip should fail because no agent is connected
@@ -79,7 +86,7 @@ func TestNewIDLength(t *testing.T) {
 }
 
 func TestHubGet(t *testing.T) {
-	hub := NewHub(nil, nil)
+	hub := NewHub(nil, nil, testAuditLogger())
 
 	// No agents connected
 	_, ok := hub.get("nonexistent")

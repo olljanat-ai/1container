@@ -2,6 +2,7 @@ package main
 
 import (
 	"container-hub/internal/api"
+	"container-hub/internal/audit"
 	"container-hub/internal/auth"
 	"container-hub/internal/config"
 	"container-hub/internal/discovery"
@@ -60,12 +61,22 @@ func main() {
 
 	authMgr := auth.NewManager(cfg)
 
+	auditLog, err := audit.New(cfg.Audit.Enabled, cfg.Audit.LogFile)
+	if err != nil {
+		log.Fatalf("failed to initialize audit logger: %v", err)
+	}
+	defer auditLog.Close()
+	if cfg.Audit.Enabled {
+		log.Printf("audit logging enabled (file=%q)", cfg.Audit.LogFile)
+	}
+
 	var srv *api.Server
 	hub := tunnel.NewHub(
 		func(id, name string, ctype models.ClusterType) { srv.ClusterJoined(id, name, ctype) },
 		func(id string) { srv.ClusterLeft(id) },
+		auditLog,
 	)
-	srv = api.NewServer(hub, authMgr, cfg.AgentSecret)
+	srv = api.NewServer(hub, authMgr, cfg.AgentSecret, auditLog)
 
 	// Load manually configured environments from YAML config
 	for _, envCfg := range cfg.Environments {

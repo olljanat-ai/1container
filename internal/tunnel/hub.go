@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"bytes"
+	"container-hub/internal/audit"
 	"container-hub/internal/models"
 	"context"
 	"crypto/rand"
@@ -26,14 +27,16 @@ type Hub struct {
 	tunnels map[string]*AgentConn // clusterID -> connection
 	onJoin  func(id, name string, ctype models.ClusterType)
 	onLeave func(id string)
+	audit   *audit.Logger
 }
 
 // NewHub creates a tunnel hub.
-func NewHub(onJoin func(string, string, models.ClusterType), onLeave func(string)) *Hub {
+func NewHub(onJoin func(string, string, models.ClusterType), onLeave func(string), auditLog *audit.Logger) *Hub {
 	return &Hub{
 		tunnels: make(map[string]*AgentConn),
 		onJoin:  onJoin,
 		onLeave: onLeave,
+		audit:   auditLog,
 	}
 }
 
@@ -86,7 +89,13 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 	h.tunnels[clusterID] = ac
 	h.mu.Unlock()
 
+	srcIP := audit.SourceIP(r)
 	log.Printf("agent connected: %s (%s) type=%s", clusterName, clusterID, clusterType)
+	h.audit.Log(audit.EventTunnelAgentConnected, audit.SeverityInfo, "system", srcIP, map[string]interface{}{
+		"cluster_id":   clusterID,
+		"cluster_name": clusterName,
+		"cluster_type": clusterType,
+	})
 	if h.onJoin != nil {
 		h.onJoin(clusterID, clusterName, models.ClusterType(clusterType))
 	}
@@ -100,6 +109,11 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	log.Printf("agent disconnected: %s (%s)", clusterName, clusterID)
+	h.audit.Log(audit.EventTunnelAgentDisconnected, audit.SeverityInfo, "system", srcIP, map[string]interface{}{
+		"cluster_id":   clusterID,
+		"cluster_name": clusterName,
+		"reason":       "connection closed",
+	})
 	if h.onLeave != nil {
 		h.onLeave(clusterID)
 	}

@@ -19,6 +19,13 @@ type Config struct {
 	Users        []UserConfig        `yaml:"users"`
 	Groups       []GroupConfig       `yaml:"groups"`
 	Environments []EnvironmentConfig `yaml:"environments"`
+	Audit        AuditConfig         `yaml:"audit"`
+}
+
+// AuditConfig controls audit logging for security-sensitive operations.
+type AuditConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	LogFile string `yaml:"log_file"` // empty = stdout (same as app logs), or path to separate file
 }
 
 // UserConfig defines a user with hashed password and group memberships.

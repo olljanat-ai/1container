@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"container-hub/internal/audit"
 	"container-hub/internal/models"
 	"container-hub/internal/tunnel"
 	"context"
@@ -9,8 +10,13 @@ import (
 	"time"
 )
 
+func testAuditLogger() *audit.Logger {
+	l, _ := audit.New(false, "")
+	return l
+}
+
 func TestNewDiscovery(t *testing.T) {
-	hub := tunnel.NewHub(nil, nil)
+	hub := tunnel.NewHub(nil, nil, testAuditLogger())
 	d := New(hub, func(env *models.Environment) {}, func(id string) {}, 30*time.Second)
 	if d == nil {
 		t.Fatal("New() returned nil")
@@ -21,7 +27,7 @@ func TestNewDiscovery(t *testing.T) {
 }
 
 func TestDiscoverOfflineClusters(t *testing.T) {
-	hub := tunnel.NewHub(nil, nil)
+	hub := tunnel.NewHub(nil, nil, testAuditLogger())
 	var registered []*models.Environment
 
 	d := New(hub, func(env *models.Environment) {
@@ -45,7 +51,7 @@ func TestDiscoverOfflineClusters(t *testing.T) {
 }
 
 func TestDiscoverRemovesStaleEnvironments(t *testing.T) {
-	hub := tunnel.NewHub(nil, nil)
+	hub := tunnel.NewHub(nil, nil, testAuditLogger())
 	var mu sync.Mutex
 	var removed []string
 
@@ -75,7 +81,7 @@ func TestDiscoverRemovesStaleEnvironments(t *testing.T) {
 }
 
 func TestDiscoverPartialRemoval(t *testing.T) {
-	hub := tunnel.NewHub(nil, nil)
+	hub := tunnel.NewHub(nil, nil, testAuditLogger())
 	var mu sync.Mutex
 	var removed []string
 
@@ -112,7 +118,7 @@ func TestDiscoverPartialRemoval(t *testing.T) {
 }
 
 func TestRunRespectsContextCancellation(t *testing.T) {
-	hub := tunnel.NewHub(nil, nil)
+	hub := tunnel.NewHub(nil, nil, testAuditLogger())
 	d := New(hub, func(env *models.Environment) {}, func(id string) {}, 100*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())

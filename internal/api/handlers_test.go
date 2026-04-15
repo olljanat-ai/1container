@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container-hub/internal/audit"
 	"container-hub/internal/auth"
 	"container-hub/internal/config"
 	"container-hub/internal/tunnel"
@@ -18,8 +19,9 @@ func newTestServer() *Server {
 		},
 	}
 	authMgr := auth.NewManager(cfg)
-	hub := tunnel.NewHub(nil, nil)
-	return NewServer(hub, authMgr, "my-agent-secret")
+	auditLog, _ := audit.New(false, "")
+	hub := tunnel.NewHub(nil, nil, auditLog)
+	return NewServer(hub, authMgr, "my-agent-secret", auditLog)
 }
 
 func TestRequireAgentAuthValid(t *testing.T) {
@@ -87,8 +89,9 @@ func TestRequireAgentAuthNoSecretConfigured(t *testing.T) {
 		Users:     []config.UserConfig{{Username: "admin", Password: hash, Admin: true}},
 	}
 	authMgr := auth.NewManager(cfg)
-	hub := tunnel.NewHub(nil, nil)
-	s := NewServer(hub, authMgr, "") // no agent secret
+	auditLog, _ := audit.New(false, "")
+	hub := tunnel.NewHub(nil, nil, auditLog)
+	s := NewServer(hub, authMgr, "", auditLog) // no agent secret
 
 	called := false
 	handler := s.requireAgentAuth(func(w http.ResponseWriter, r *http.Request) {
