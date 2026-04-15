@@ -76,7 +76,10 @@ func (n *NomadProvider) ListContainers(ctx context.Context) ([]models.Container,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("nomad list: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("nomad list: %s – %s", resp.Status, string(b))
 	}
 
@@ -121,7 +124,10 @@ func (n *NomadProvider) InspectContainer(ctx context.Context, id string) (*model
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("nomad inspect: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("nomad inspect: %s – %s", resp.Status, string(b))
 	}
 
@@ -204,7 +210,10 @@ func (n *NomadProvider) StopContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("nomad stop: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("nomad stop: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -221,7 +230,10 @@ func (n *NomadProvider) RestartContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("nomad restart: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("nomad restart: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -241,7 +253,10 @@ func (n *NomadProvider) DeleteContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("nomad delete: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("nomad delete: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -255,7 +270,10 @@ func (n *NomadProvider) jobIDFromAlloc(ctx context.Context, allocID string) (str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("%s – read body: %w", resp.Status, err)
+		}
 		return "", fmt.Errorf("%s – %s", resp.Status, string(b))
 	}
 	var alloc struct {
@@ -284,7 +302,10 @@ func (n *NomadProvider) ExecContainer(ctx context.Context, id string, cmd []stri
 		return nil, fmt.Errorf("nomad exec: %w", err)
 	}
 	defer resp.Body.Close()
-	output, _ := io.ReadAll(resp.Body)
+	output, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("nomad exec read output: %w", err)
+	}
 	return &models.ExecResponse{Output: string(output), ExitCode: 0}, nil
 }
 

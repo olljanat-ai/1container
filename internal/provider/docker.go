@@ -65,7 +65,9 @@ func (d *DockerProvider) node(ctx context.Context) string {
 	var info struct {
 		Name string `json:"Name"`
 	}
-	json.NewDecoder(resp.Body).Decode(&info)
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "local"
+	}
 	if info.Name != "" {
 		return info.Name
 	}
@@ -79,7 +81,10 @@ func (d *DockerProvider) ListContainers(ctx context.Context) ([]models.Container
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("docker list: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("docker list: %s – %s", resp.Status, string(b))
 	}
 
@@ -119,7 +124,10 @@ func (d *DockerProvider) InspectContainer(ctx context.Context, id string) (*mode
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("docker inspect: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("docker inspect: %s – %s", resp.Status, string(b))
 	}
 
@@ -176,13 +184,18 @@ func (d *DockerProvider) ExecContainer(ctx context.Context, id string, cmd []str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 201 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("docker exec create: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("docker exec create: %s – %s", resp.Status, string(b))
 	}
 	var execCreate struct {
 		ID string `json:"Id"`
 	}
-	json.NewDecoder(resp.Body).Decode(&execCreate)
+	if err := json.NewDecoder(resp.Body).Decode(&execCreate); err != nil {
+		return nil, fmt.Errorf("decode exec response: %w", err)
+	}
 
 	startResp, err := d.do(ctx, "POST", "/v1.41/exec/"+execCreate.ID+"/start",
 		strings.NewReader(`{"Detach":false,"Tty":false}`))
@@ -190,17 +203,21 @@ func (d *DockerProvider) ExecContainer(ctx context.Context, id string, cmd []str
 		return nil, err
 	}
 	defer startResp.Body.Close()
-	output, _ := io.ReadAll(startResp.Body)
+	output, err := io.ReadAll(startResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("docker exec read output: %w", err)
+	}
 
-	inspResp, _ := d.do(ctx, "GET", "/v1.41/exec/"+execCreate.ID+"/json", nil)
+	inspResp, err := d.do(ctx, "GET", "/v1.41/exec/"+execCreate.ID+"/json", nil)
 	exitCode := 0
-	if inspResp != nil {
+	if err == nil && inspResp != nil {
 		defer inspResp.Body.Close()
 		var ei struct {
 			ExitCode int `json:"ExitCode"`
 		}
-		json.NewDecoder(inspResp.Body).Decode(&ei)
-		exitCode = ei.ExitCode
+		if err := json.NewDecoder(inspResp.Body).Decode(&ei); err == nil {
+			exitCode = ei.ExitCode
+		}
 	}
 
 	return &models.ExecResponse{Output: string(stripDockerStream(output)), ExitCode: exitCode}, nil
@@ -213,7 +230,10 @@ func (d *DockerProvider) StopContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 204 && resp.StatusCode != 304 { // 304 = already stopped
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("docker stop: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("docker stop: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -226,7 +246,10 @@ func (d *DockerProvider) RestartContainer(ctx context.Context, id string) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 204 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("docker restart: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("docker restart: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -239,7 +262,10 @@ func (d *DockerProvider) DeleteContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 204 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("docker delete: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("docker delete: %s – %s", resp.Status, string(b))
 	}
 	return nil
