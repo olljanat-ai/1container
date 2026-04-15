@@ -190,6 +190,86 @@ func (n *NomadProvider) ContainerLogs(ctx context.Context, id string, tail int, 
 	return nil, fmt.Errorf("nomad logs: no output available")
 }
 
+func (n *NomadProvider) StopContainer(ctx context.Context, id string) error {
+	// Stop the job (deregister without purge). We need the job ID from the allocation.
+	allocID, _ := parseNomadID(id)
+	jobID, err := n.jobIDFromAlloc(ctx, allocID)
+	if err != nil {
+		return fmt.Errorf("nomad stop: %w", err)
+	}
+	path := "/v1/job/" + jobID + "?purge=false" + n.nsParam("&")
+	resp, err := n.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return fmt.Errorf("nomad stop: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("nomad stop: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+func (n *NomadProvider) RestartContainer(ctx context.Context, id string) error {
+	// Restart the specific allocation task.
+	allocID, taskName := parseNomadID(id)
+	payload, _ := json.Marshal(map[string]string{"TaskName": taskName})
+	path := "/v1/client/allocation/" + allocID + "/restart"
+	resp, err := n.do(ctx, "PUT", path, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("nomad restart: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("nomad restart: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+func (n *NomadProvider) DeleteContainer(ctx context.Context, id string) error {
+	// Purge the job entirely.
+	allocID, _ := parseNomadID(id)
+	jobID, err := n.jobIDFromAlloc(ctx, allocID)
+	if err != nil {
+		return fmt.Errorf("nomad delete: %w", err)
+	}
+	path := "/v1/job/" + jobID + "?purge=true" + n.nsParam("&")
+	resp, err := n.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return fmt.Errorf("nomad delete: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("nomad delete: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+// jobIDFromAlloc fetches the job ID for a given allocation.
+func (n *NomadProvider) jobIDFromAlloc(ctx context.Context, allocID string) (string, error) {
+	resp, err := n.do(ctx, "GET", "/v1/allocation/"+allocID+n.nsParam("?"), nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("%s – %s", resp.Status, string(b))
+	}
+	var alloc struct {
+		JobID string `json:"JobID"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&alloc); err != nil {
+		return "", err
+	}
+	if alloc.JobID == "" {
+		return "", fmt.Errorf("allocation %s has no job ID", allocID)
+	}
+	return alloc.JobID, nil
+}
+
 func (n *NomadProvider) ExecContainer(ctx context.Context, id string, cmd []string) (*models.ExecResponse, error) {
 	allocID, taskName := parseNomadID(id)
 	payload := map[string]interface{}{"command": cmd[0]}

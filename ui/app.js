@@ -348,13 +348,107 @@ async function removeEnv(id) {
 }
 
 // ============================================================
+// Confirmation Dialog
+// ============================================================
+let confirmCallback = null;
+
+function showConfirm(title, message, onConfirm) {
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-message').textContent = message;
+  const feedback = document.getElementById('confirm-feedback');
+  feedback.classList.add('hidden');
+  feedback.textContent = '';
+  feedback.className = 'confirm-feedback hidden';
+  document.getElementById('confirm-ok').disabled = false;
+  confirmCallback = onConfirm;
+  document.getElementById('confirm-dialog').classList.remove('hidden');
+}
+
+document.getElementById('confirm-cancel').addEventListener('click', () => {
+  document.getElementById('confirm-dialog').classList.add('hidden');
+  confirmCallback = null;
+});
+document.getElementById('confirm-ok').addEventListener('click', async () => {
+  if (!confirmCallback) return;
+  const btn = document.getElementById('confirm-ok');
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  const feedback = document.getElementById('confirm-feedback');
+  try {
+    await confirmCallback();
+    feedback.textContent = 'Operation completed successfully.';
+    feedback.className = 'confirm-feedback success';
+    feedback.classList.remove('hidden');
+    setTimeout(() => {
+      document.getElementById('confirm-dialog').classList.add('hidden');
+      btn.textContent = 'Confirm';
+      btn.disabled = false;
+      confirmCallback = null;
+      loadContainers();
+    }, 1200);
+  } catch (e) {
+    feedback.textContent = 'Error: ' + e.message;
+    feedback.className = 'confirm-feedback error';
+    feedback.classList.remove('hidden');
+    btn.textContent = 'Confirm';
+    btn.disabled = false;
+  }
+});
+
+// ============================================================
+// Container Lifecycle Actions
+// ============================================================
+async function containerAction(action, method) {
+  if (!currentContainer) return;
+  const {envID, containerID} = currentContainer;
+  let url, opts;
+  if (method === 'DELETE') {
+    url = `${API}/api/containers/${envID}/${containerID}`;
+    opts = {method: 'DELETE'};
+  } else {
+    url = `${API}/api/containers/${envID}/${containerID}/${action}`;
+    opts = {method: 'POST'};
+  }
+  const resp = await authFetch(url, opts);
+  if (!resp.ok) {
+    const data = await resp.json();
+    throw new Error(data.error || `${action} failed`);
+  }
+}
+
+document.getElementById('action-stop').addEventListener('click', () => {
+  if (!currentContainer) return;
+  showConfirm('Stop Container', `Are you sure you want to stop "${currentContainer.name}"?`, () => containerAction('stop', 'POST'));
+});
+
+document.getElementById('action-restart').addEventListener('click', () => {
+  if (!currentContainer) return;
+  showConfirm('Restart Container', `Are you sure you want to restart "${currentContainer.name}"?`, () => containerAction('restart', 'POST'));
+});
+
+document.getElementById('action-delete').addEventListener('click', () => {
+  if (!currentContainer) return;
+  showConfirm('Delete Container', `Are you sure you want to permanently delete "${currentContainer.name}"? This action cannot be undone.`, () => containerAction('delete', 'DELETE'));
+});
+
+// ============================================================
 // Side Panel
 // ============================================================
+function updateActionButtons() {
+  const deleteBtn = document.getElementById('action-delete');
+  if (currentUser && currentUser.admin) {
+    deleteBtn.classList.remove('hidden');
+  } else {
+    deleteBtn.classList.add('hidden');
+  }
+}
+
 function openPanel(envID, containerID, name, tab) {
   closeLogStream(); closeShell();
   currentContainer = {envID, containerID, name};
   document.getElementById('side-title').textContent = name;
   document.getElementById('side-panel').classList.remove('hidden');
+  updateActionButtons();
   document.querySelectorAll('.side-tab').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.side-body').forEach(b => b.classList.remove('active'));
   document.querySelector(`.side-tab[data-side="${tab}"]`).classList.add('active');

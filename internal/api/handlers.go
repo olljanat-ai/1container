@@ -68,7 +68,8 @@ func NewServer(hub *tunnel.Hub, authMgr *auth.Manager, agentSecret string) *Serv
 	// Containers
 	mux.HandleFunc("GET /api/containers", s.requireAuth(s.listContainers))
 	mux.HandleFunc("GET /api/containers/{envID}/{containerID...}", s.requireAuth(s.inspectOrAction))
-	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}", s.requireAuth(s.execContainer))
+	mux.HandleFunc("POST /api/containers/{envID}/{containerID...}", s.requireAuth(s.containerPostAction))
+	mux.HandleFunc("DELETE /api/containers/{envID}/{containerID...}", s.requireAuth(s.deleteContainer))
 
 	// WebSocket endpoints (auth checked inside)
 	mux.HandleFunc("/ws/logs/{envID}/{containerID...}", s.wsLogs)
@@ -490,6 +491,21 @@ func (s *Server) containerLogs(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, rc)
 }
 
+// containerPostAction routes POST requests based on URL suffix.
+func (s *Server) containerPostAction(w http.ResponseWriter, r *http.Request) {
+	containerID := r.PathValue("containerID")
+	switch {
+	case strings.HasSuffix(containerID, "/stop"):
+		s.stopContainer(w, r)
+	case strings.HasSuffix(containerID, "/restart"):
+		s.restartContainer(w, r)
+	case strings.HasSuffix(containerID, "/exec"):
+		s.execContainer(w, r)
+	default:
+		s.execContainer(w, r)
+	}
+}
+
 func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	envID := r.PathValue("envID")
@@ -532,6 +548,113 @@ func (s *Server) execContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (s *Server) stopContainer(w http.ResponseWriter, r *http.Request) {
+	envID := r.PathValue("envID")
+	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/stop")
+
+	env := s.getEnv(envID)
+	if env == nil {
+		writeErr(w, 404, "environment not found")
+		return
+	}
+
+	user := userFromContext(r.Context())
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		writeErr(w, 403, "access denied")
+		return
+	}
+
+	p := s.providerFor(env)
+	if p == nil {
+		writeErr(w, 502, "cluster not available")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := p.StopContainer(ctx, containerID); err != nil {
+		log.Printf("container stop failed: env=%s container=%s user=%s err=%v", envID, containerID, user.Username, err)
+		writeErr(w, 502, err.Error())
+		return
+	}
+	log.Printf("container stopped: env=%s container=%s user=%s", envID, containerID, user.Username)
+	writeJSON(w, 200, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) restartContainer(w http.ResponseWriter, r *http.Request) {
+	envID := r.PathValue("envID")
+	containerID := strings.TrimSuffix(r.PathValue("containerID"), "/restart")
+
+	env := s.getEnv(envID)
+	if env == nil {
+		writeErr(w, 404, "environment not found")
+		return
+	}
+
+	user := userFromContext(r.Context())
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		writeErr(w, 403, "access denied")
+		return
+	}
+
+	p := s.providerFor(env)
+	if p == nil {
+		writeErr(w, 502, "cluster not available")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := p.RestartContainer(ctx, containerID); err != nil {
+		log.Printf("container restart failed: env=%s container=%s user=%s err=%v", envID, containerID, user.Username, err)
+		writeErr(w, 502, err.Error())
+		return
+	}
+	log.Printf("container restarted: env=%s container=%s user=%s", envID, containerID, user.Username)
+	writeJSON(w, 200, map[string]string{"status": "restarted"})
+}
+
+func (s *Server) deleteContainer(w http.ResponseWriter, r *http.Request) {
+	envID := r.PathValue("envID")
+	containerID := r.PathValue("containerID")
+
+	user := userFromContext(r.Context())
+	if !user.Admin {
+		writeErr(w, 403, "admin access required for delete operations")
+		return
+	}
+
+	env := s.getEnv(envID)
+	if env == nil {
+		writeErr(w, 404, "environment not found")
+		return
+	}
+
+	if !s.auth.CanAccessEnvironment(user, env.Name) {
+		writeErr(w, 403, "access denied")
+		return
+	}
+
+	p := s.providerFor(env)
+	if p == nil {
+		writeErr(w, 502, "cluster not available")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := p.DeleteContainer(ctx, containerID); err != nil {
+		log.Printf("container delete failed: env=%s container=%s user=%s err=%v", envID, containerID, user.Username, err)
+		writeErr(w, 502, err.Error())
+		return
+	}
+	log.Printf("container deleted: env=%s container=%s user=%s", envID, containerID, user.Username)
+	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
 
 // --- WebSocket: streaming logs -----------------------------------------------
