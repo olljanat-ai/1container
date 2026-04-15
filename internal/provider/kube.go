@@ -85,7 +85,10 @@ func (k *KubeProvider) ListContainers(ctx context.Context) ([]models.Container, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("k8s list: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("k8s list: %s – %s", resp.Status, string(b))
 	}
 
@@ -139,7 +142,10 @@ func (k *KubeProvider) InspectContainer(ctx context.Context, id string) (*models
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("k8s inspect: %s – read body: %w", resp.Status, err)
+		}
 		return nil, fmt.Errorf("k8s inspect: %s – %s", resp.Status, string(b))
 	}
 
@@ -209,7 +215,10 @@ func (k *KubeProvider) StopContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 && resp.StatusCode != 202 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("k8s stop: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("k8s stop: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -224,7 +233,10 @@ func (k *KubeProvider) RestartContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 && resp.StatusCode != 202 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("k8s restart: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("k8s restart: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -239,7 +251,10 @@ func (k *KubeProvider) DeleteContainer(ctx context.Context, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 && resp.StatusCode != 202 {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("k8s delete: %s – read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("k8s delete: %s – %s", resp.Status, string(b))
 	}
 	return nil
@@ -258,6 +273,9 @@ func (k *KubeProvider) ExecContainer(ctx context.Context, id string, cmd []strin
 		return nil, fmt.Errorf("k8s exec: %w", err)
 	}
 	defer resp.Body.Close()
-	output, _ := io.ReadAll(resp.Body)
+	output, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("k8s exec read output: %w", err)
+	}
 	return &models.ExecResponse{Output: string(output), ExitCode: 0}, nil
 }

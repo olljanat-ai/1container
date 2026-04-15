@@ -819,7 +819,10 @@ func (s *Server) wsShell(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Cmd string `json:"cmd"`
 		}
-		if json.Unmarshal(msg, &req) != nil || req.Cmd == "" {
+		if err := json.Unmarshal(msg, &req); err != nil {
+			continue
+		}
+		if req.Cmd == "" {
 			continue
 		}
 
@@ -917,6 +920,8 @@ func parseTail(s string, defaultVal int) int {
 
 func shortID() string {
 	b := make([]byte, 6)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return fmt.Sprintf("%x", b)
 }
