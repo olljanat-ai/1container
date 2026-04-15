@@ -145,6 +145,81 @@ func TestDockerProvider(t *testing.T) {
 	})
 }
 
+// TestDockerLifecycle exercises the Docker provider's lifecycle operations
+// (stop, restart, delete) against a real Docker-in-Docker daemon.
+func TestDockerLifecycle(t *testing.T) {
+	skipIfNoDocker(t)
+
+	endpoint := os.Getenv("DOCKER_INTEGRATION_ENDPOINT")
+	if endpoint == "" {
+		endpoint = setupDinD(t)
+	}
+
+	client := newTestClient(endpoint)
+	p := provider.New(provider.Config{
+		ClusterType: models.ClusterDockerSwarm,
+		EnvID:       "test-docker",
+		EnvName:     "Integration Docker",
+	}, client)
+
+	ctx := context.Background()
+
+	// Find the integration-test container.
+	containers, err := p.ListContainers(ctx)
+	if err != nil {
+		t.Fatalf("ListContainers: %v", err)
+	}
+	var containerID string
+	for _, c := range containers {
+		if c.Name == "integration-test" {
+			containerID = c.ID
+			break
+		}
+	}
+	if containerID == "" {
+		t.Fatal("integration-test container not found")
+	}
+
+	t.Run("StopContainer", func(t *testing.T) {
+		if err := p.StopContainer(ctx, containerID); err != nil {
+			t.Fatalf("StopContainer(%s): %v", containerID, err)
+		}
+		// Verify container is stopped.
+		detail, err := p.InspectContainer(ctx, containerID)
+		if err != nil {
+			t.Fatalf("InspectContainer after stop: %v", err)
+		}
+		if detail.State != "exited" {
+			t.Errorf("state after stop = %q, want exited", detail.State)
+		}
+	})
+
+	t.Run("RestartContainer", func(t *testing.T) {
+		if err := p.RestartContainer(ctx, containerID); err != nil {
+			t.Fatalf("RestartContainer(%s): %v", containerID, err)
+		}
+		// Verify container is running again.
+		detail, err := p.InspectContainer(ctx, containerID)
+		if err != nil {
+			t.Fatalf("InspectContainer after restart: %v", err)
+		}
+		if detail.State != "running" {
+			t.Errorf("state after restart = %q, want running", detail.State)
+		}
+	})
+
+	t.Run("DeleteContainer", func(t *testing.T) {
+		if err := p.DeleteContainer(ctx, containerID); err != nil {
+			t.Fatalf("DeleteContainer(%s): %v", containerID, err)
+		}
+		// Verify container is gone.
+		_, err := p.InspectContainer(ctx, containerID)
+		if err == nil {
+			t.Error("expected error inspecting deleted container, got nil")
+		}
+	})
+}
+
 // setupDinD starts a Docker-in-Docker container, creates a test workload inside
 // it, and returns the DinD API endpoint.
 func setupDinD(t *testing.T) string {

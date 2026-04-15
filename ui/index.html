@@ -102,11 +102,29 @@
       </section>
     </main>
 
+    <!-- Confirmation Dialog -->
+    <div id="confirm-dialog" class="modal hidden">
+      <div class="modal-content">
+        <h3 id="confirm-title">Confirm</h3>
+        <p id="confirm-message"></p>
+        <div id="confirm-feedback" class="confirm-feedback hidden"></div>
+        <div class="form-actions">
+          <button class="btn" id="confirm-cancel">Cancel</button>
+          <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Side Panel -->
     <aside id="side-panel" class="side-panel hidden">
       <div class="side-header">
         <h3 id="side-title">Container</h3>
         <button id="side-close">&times;</button>
+      </div>
+      <div class="side-actions" id="side-actions">
+        <button class="btn btn-sm btn-warn" id="action-stop" title="Stop container">Stop</button>
+        <button class="btn btn-sm" id="action-restart" title="Restart container">Restart</button>
+        <button class="btn btn-sm btn-danger" id="action-delete" title="Delete container (admin only)">Delete</button>
       </div>
       <div class="side-tabs">
         <button class="side-tab active" data-side="inspect">Inspect</button>

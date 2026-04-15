@@ -206,6 +206,45 @@ func (d *DockerProvider) ExecContainer(ctx context.Context, id string, cmd []str
 	return &models.ExecResponse{Output: string(stripDockerStream(output)), ExitCode: exitCode}, nil
 }
 
+func (d *DockerProvider) StopContainer(ctx context.Context, id string) error {
+	resp, err := d.do(ctx, "POST", "/v1.41/containers/"+id+"/stop", nil)
+	if err != nil {
+		return fmt.Errorf("docker stop: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 && resp.StatusCode != 304 { // 304 = already stopped
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("docker stop: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+func (d *DockerProvider) RestartContainer(ctx context.Context, id string) error {
+	resp, err := d.do(ctx, "POST", "/v1.41/containers/"+id+"/restart", nil)
+	if err != nil {
+		return fmt.Errorf("docker restart: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("docker restart: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+func (d *DockerProvider) DeleteContainer(ctx context.Context, id string) error {
+	resp, err := d.do(ctx, "DELETE", "/v1.41/containers/"+id+"?force=true", nil)
+	if err != nil {
+		return fmt.Errorf("docker delete: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("docker delete: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
 func stripDockerStream(data []byte) []byte {
 	var out []byte
 	for len(data) >= 8 {

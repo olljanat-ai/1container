@@ -198,6 +198,53 @@ func (k *KubeProvider) ContainerLogs(ctx context.Context, id string, tail int, f
 	return resp.Body, nil
 }
 
+func (k *KubeProvider) StopContainer(ctx context.Context, id string) error {
+	// In Kubernetes, "stop" means deleting the pod with a graceful termination period.
+	// If the pod is managed by a controller (Deployment, ReplicaSet), the controller
+	// will recreate it. For bare pods, this effectively stops the workload.
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s?gracePeriodSeconds=30", k.ns(), id)
+	resp, err := k.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return fmt.Errorf("k8s stop: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("k8s stop: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+func (k *KubeProvider) RestartContainer(ctx context.Context, id string) error {
+	// Restart by deleting the pod; if managed by a controller it gets recreated.
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", k.ns(), id)
+	resp, err := k.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return fmt.Errorf("k8s restart: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("k8s restart: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+func (k *KubeProvider) DeleteContainer(ctx context.Context, id string) error {
+	// Force delete with zero grace period.
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s?gracePeriodSeconds=0", k.ns(), id)
+	resp, err := k.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return fmt.Errorf("k8s delete: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("k8s delete: %s – %s", resp.Status, string(b))
+	}
+	return nil
+}
+
 func (k *KubeProvider) ExecContainer(ctx context.Context, id string, cmd []string) (*models.ExecResponse, error) {
 	params := url.Values{}
 	params.Set("stdout", "1")

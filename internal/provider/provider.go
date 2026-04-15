@@ -13,6 +13,11 @@ type Provider interface {
 	InspectContainer(ctx context.Context, containerID string) (*models.ContainerDetail, error)
 	ContainerLogs(ctx context.Context, containerID string, tail int, follow bool) (io.ReadCloser, error)
 	ExecContainer(ctx context.Context, containerID string, cmd []string) (*models.ExecResponse, error)
+
+	// Lifecycle operations
+	StopContainer(ctx context.Context, containerID string) error
+	RestartContainer(ctx context.Context, containerID string) error
+	DeleteContainer(ctx context.Context, containerID string) error
 }
 
 // Config holds provider configuration. Auth is handled by the agent, not here.
